@@ -1,4 +1,4 @@
-// frontend/src/services/socketService.js
+// frontend/src/chats/socketService.js
 import { io } from "socket.io-client";
 import useAuthStore from "./useAuthStore";
 import useChatStore from "./useChatStore";
@@ -339,39 +339,53 @@ export const fetchChannels = () => {
 
 export const fetchMessages = (channelId, page = 1) => {
   const socket = getSocket();
+  // Get necessary store actions
   const { setMessagesLoading, addMessages, setMessagesError } =
     useChatStore.getState();
+
   if (!socket || !socket.connected) {
+    const errorMsg = "Not connected to chat service.";
     console.error("Socket not connected. Cannot fetch messages.");
-    setMessagesError(channelId, "Not connected to chat service.");
-    return;
+    setMessagesError(channelId, errorMsg); // Update store with error
+    return Promise.reject(new Error(errorMsg)); // Return a rejected promise
   }
+
+  // Set loading state for this specific channel
   setMessagesLoading(channelId, true);
-  const limit = MESSAGES_PER_PAGE;
+  const limit = MESSAGES_PER_PAGE; // Ensure this constant is defined or imported
+
   console.log(
     `Emitting getMessages for channel ${channelId}, page ${page}, limit ${limit}`
   );
-  socket.emit(
-    SOCKET_EVENTS.GET_MESSAGES,
-    { channelId, page, limit },
-    (response) => {
-      console.log("getMessages response:", response);
-      if (response.success && response.messagesData) {
-        // Pass the page number loaded to the store action
-        addMessages(channelId, response.messagesData, page);
-      } else {
-        setMessagesError(
-          channelId,
-          response?.error || "Failed to load messages"
+
+  // Return a promise to allow the caller (ChatWindow) to know when it's done (optional)
+  return new Promise((resolve, reject) => {
+    socket.emit(
+      SOCKET_EVENTS.GET_MESSAGES,
+      { channelId, page, limit },
+      (response) => {
+        console.log(
+          `getMessages response for channel ${channelId} page ${page}:`,
+          response
         );
-        toast.error(`Error Loading Messages for Channel ${channelId}`, {
-          description: response?.error,
-        });
+        // Always set loading to false *after* processing the response
+        setMessagesLoading(channelId, false); // Set loading false *before* resolving/rejecting
+
+        if (response.success && response.messagesData) {
+          // Pass the fetched page number to addMessages
+          addMessages(channelId, response.messagesData, page);
+          resolve(response.messagesData); // Resolve with the data
+        } else {
+          const errorMsg = response?.error || "Failed to load messages";
+          setMessagesError(channelId, errorMsg); // Update store with error
+          toast.error(`Error Loading Messages for Channel ${channelId}`, {
+            description: errorMsg,
+          });
+          reject(new Error(errorMsg)); // Reject with an error object
+        }
       }
-      // Ensure loading is set to false even on error/success
-      setMessagesLoading(channelId, false);
-    }
-  );
+    );
+  });
 };
 
 export const emitSendMessage = (channelId, message, attachment_id = null) => {
@@ -466,21 +480,24 @@ export const emitMarkMessageRead = (channelId, messageId) => {
 };
 
 export const emitMarkAllRead = (channelId) => {
-  if (!socket || !socket.connected) return Promise.reject("Not connected");
-  console.log(`Emitting markAllRead for channel ${channelId}`);
+  const socket = getSocket();
+  if (!socket || !socket.connected) {
+    const errorMsg = "Not connected";
+    console.error("Socket not connected:", errorMsg);
+    return Promise.reject(new Error(errorMsg));
+  }
+  console.log(`Emitting markChannelRead for channel ${channelId}`);
   return new Promise((resolve, reject) => {
-    // Define a socket event name, e.g., 'markChannelRead'
     socket.emit("markChannelRead", { channelId }, (response) => {
       if (response?.success) {
         console.log(`Channel ${channelId} marked as read successfully.`);
-        // Update store locally? Or wait for backend push?
-        // For now, just resolve. Backend should handle updating the channel list.
         resolve();
       } else {
+        const errorMsg = response?.error || "Failed on server";
         console.warn(
-          `Failed to mark channel ${channelId} as read: ${response?.error}`
+          `Failed to mark channel ${channelId} as read: ${errorMsg}`
         );
-        reject(response?.error || "Failed on server");
+        reject(new Error(errorMsg));
       }
     });
   });

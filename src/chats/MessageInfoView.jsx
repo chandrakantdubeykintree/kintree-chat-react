@@ -1,4 +1,4 @@
-// components/MessageInfoView.jsx
+// components/chats/MessageInfoView.jsx
 import React from "react";
 import { format } from "date-fns";
 import { CheckCheck, Clock } from "lucide-react";

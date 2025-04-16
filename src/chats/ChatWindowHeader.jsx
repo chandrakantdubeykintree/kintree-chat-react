@@ -1,4 +1,4 @@
-// frontend/src/components/ChatWindowHeader.jsx
+// frontend/src/components/chats/ChatWindowHeader.jsx
 import React, { useMemo, useState } from "react"; // Import useMemo
 import {
   ArrowLeft,

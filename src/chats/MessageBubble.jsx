@@ -1,4 +1,4 @@
-// frontend/src/components/MessageBubble.jsx
+// frontend/src/components/chats/MessageBubble.jsx
 import React from "react";
 import { format } from "date-fns";
 import {
@@ -32,8 +32,6 @@ const MessageBubble = ({
 }) => {
   // Added onEditAction
   const currentUser = useAuthStore((state) => state.user);
-  // *** USE THE HOOK to get isSelecting state ***
-  console.log("current user", currentUser);
 
   const isSelecting = useChatStore((state) => state.isSelecting);
   const isSender =

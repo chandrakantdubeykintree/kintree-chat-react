@@ -1,4 +1,3 @@
-// frontend/src/components/AttachmentPreview.jsx
 import React from "react";
 import {
   Image as ImageIcon,

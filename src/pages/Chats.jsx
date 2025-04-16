@@ -59,27 +59,21 @@ const Chats = () => {
 
   const handleViewContactInfo = (channelData) => {
     if (!channelData) return;
-    console.log("Setting Contact Info Drawer Open. Data:", channelData); // Keep debug log
     setViewingContactData(channelData);
     setIsContactInfoOpen(true);
   };
 
   const handleViewMessageInfo = (messageData) => {
     if (!messageData) return;
-    console.log("Setting Message Info Drawer Open. Data:", messageData); // Keep debug log
     setViewingMessageData(messageData);
     setIsMessageInfoOpen(true);
   };
 
   const handleChannelCreated = (newChannelData) => {
     if (!newChannelData || !newChannelData.id) {
-      console.error("Invalid channel data received after creation.");
       return;
     }
-    console.log(
-      "Navigating to newly created/fetched channel:",
-      newChannelData.id
-    );
+
     updateChannelInList(newChannelData);
     setActiveChannelId(newChannelData.id);
     setShowChatList(false);
@@ -112,7 +106,6 @@ const Chats = () => {
     if (storedToken && !socket?.connected && !socketError) {
       setIsConnecting(true);
       setSocketError(null);
-      console.log("Attempting socket connection...");
       connectSocket(); // Assuming this might return the socket or setup happens async
 
       // Allow time for socket instance to potentially be created/ready
@@ -123,17 +116,12 @@ const Chats = () => {
         if (tempSocket && !tempSocket.connected) {
           // Check connection status again
           handleConnect = () => {
-            console.log("Local connect handler: Success");
             setIsConnecting(false);
             setInitialAuthDone(true);
             setSocketError(null);
             cleanupListeners();
           };
           handleConnectError = (error) => {
-            console.error(
-              "Local connect handler: Error",
-              error?.message || error
-            );
             setIsConnecting(false);
             setInitialAuthDone(true);
             setSocketError(error?.message || "Connection failed");
@@ -147,7 +135,6 @@ const Chats = () => {
           timeoutId = setTimeout(() => {
             if (isConnecting && !getSocket()?.connected) {
               // Re-check connection status
-              console.error("Connection attempt timed out.");
               setIsConnecting(false);
               setInitialAuthDone(true);
               setSocketError("Connection timed out");
@@ -161,9 +148,6 @@ const Chats = () => {
           setInitialAuthDone(true);
           setSocketError(null);
         } else {
-          console.error(
-            "Failed to get socket instance after connectSocket call."
-          );
           setIsConnecting(false);
           setInitialAuthDone(true);
           setSocketError("Failed to initialize socket.");
@@ -180,7 +164,6 @@ const Chats = () => {
 
     // Cleanup on component unmount OR dependency change
     return () => {
-      console.log("Chats connection effect cleanup.");
       cleanupListeners(); // Clean up timers and listeners from this effect run
     };
   }, [storedToken, socketError]); // Only re-run if token changes or we clear error to retry
@@ -188,7 +171,6 @@ const Chats = () => {
   // --- Token Handling useEffect ---
   useEffect(() => {
     if (urlToken && !storedToken) {
-      console.log("Using token from URL:", urlToken);
       setToken(urlToken);
       // Setting isConnecting here might be redundant if handled by the connection effect
     } else if (!urlToken && !storedToken) {
@@ -255,7 +237,7 @@ const Chats = () => {
 
   return (
     // Use Card as the top-level container with desired styling
-    <Card className="bg-background rounded-2xl h-full overflow-hidden">
+    <Card className="bg-background rounded-2xl h-full overflow-hidden w-full">
       {/* --- Drawers outside the main layout grid --- */}
       <Drawer open={isCreateChatOpen} onOpenChange={setIsCreateChatOpen}>
         <DrawerContent className="h-[85%] sm:h-[70%]">
@@ -325,10 +307,6 @@ const Chats = () => {
         <div
           className={cn("h-full", showChatList ? "hidden md:block" : "block")}
         >
-          {console.log(
-            "Parent RENDER: Rendering ChatWindow container. Active Channel ID:",
-            activeChannelId
-          )}
           {activeChannelId ? ( // Conditionally render ChatWindow only if ID exists
             <ChatWindow
               channelId={activeChannelId}

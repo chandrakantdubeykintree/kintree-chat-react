@@ -1,4 +1,4 @@
-// frontend/src/store/useChatStore.js
+// frontend/src/components/chats/useChatStore.js
 import { create } from "zustand";
 import { produce } from "immer"; // Optional: For easier nested state updates
 import useAuthStore from "./useAuthStore";
@@ -10,7 +10,6 @@ const defaultChannelMessageState = {
   total: 0,
   loading: false,
   error: null,
-  oldestPageFetched: 0, // Ensure initialized to 0
 };
 
 const useChatStore = create((set, get) => ({
@@ -54,10 +53,6 @@ const useChatStore = create((set, get) => ({
   setActiveChannelId: (channelId) =>
     set(
       produce((state) => {
-        // Optional: Clear typing indicator for the channel we are leaving
-        // if (state.activeChannelId && state.typingStatus[state.activeChannelId]) {
-        //     state.typingStatus[state.activeChannelId] = null;
-        // }
         // Clear local timeout for previous channel
         if (
           state.activeChannelId &&
@@ -68,17 +63,12 @@ const useChatStore = create((set, get) => ({
         }
 
         state.activeChannelId = channelId;
-        state.isSelecting = false;
+        state.isSelecting = false; // Reset selection when changing channels
+        // Ensure selectedMessages is an empty object, not just resetting one channel
         state.selectedMessages = {};
+        // Initialize message state for the new channel if it doesn't exist
         if (channelId && !state.messages[channelId]) {
-          state.messages[channelId] = {
-            messages: [],
-            currentPage: 0,
-            lastPage: 1,
-            total: 0,
-            loading: false,
-            error: null,
-          };
+          state.messages[channelId] = { ...defaultChannelMessageState };
         }
       })
     ),
@@ -108,17 +98,23 @@ const useChatStore = create((set, get) => ({
           console.warn(
             `setMessagesError called for uninitialized channel ${channelId}`
           );
+          // Initialize with error state if needed
+          state.messages[channelId] = {
+            ...defaultChannelMessageState,
+            error: error,
+            loading: false,
+          };
         }
       })
     ),
   addMessages: (
     channelId,
     messagesData,
-    fetchedPage // Keep fetchedPage argument
+    fetchedPage // Page number that was just successfully fetched
   ) =>
     set(
       produce((state) => {
-        // Ensure initialized
+        // Ensure initialized (safe check)
         if (!state.messages[channelId]) {
           state.messages[channelId] = { ...defaultChannelMessageState };
         }
@@ -126,32 +122,32 @@ const useChatStore = create((set, get) => ({
         const existingMessages = channelState.messages;
         const newMessages = messagesData.messages || [];
 
+        // Filter out duplicates
+        const existingMessageIds = new Set(existingMessages.map((m) => m.id));
         const uniqueNewMessages = newMessages.filter(
-          (newMsg) => !existingMessages.some((exMsg) => exMsg.id === newMsg.id)
+          (newMsg) => !existingMessageIds.has(newMsg.id)
         );
 
-        // Prepend older messages
+        // Prepend older messages (newly fetched) to the existing ones
         const combined = [...uniqueNewMessages, ...existingMessages];
+
+        // Sort combined array by creation date (ascending)
         combined.sort(
           (a, b) => new Date(a.created_at) - new Date(b.created_at)
         );
 
         channelState.messages = combined;
-        channelState.lastPage = messagesData.last_page;
-        channelState.total = messagesData.total_record;
-        // Update oldestPageFetched correctly
-        channelState.oldestPageFetched = Math.max(
-          channelState.oldestPageFetched || 0,
-          fetchedPage
-        );
-        channelState.loading = false;
-        channelState.error = null;
-        channelState.oldestPageFetched = Math.max(
-          channelState.oldestPageFetched || 0,
-          fetchedPage
-        );
+        channelState.lastPage = messagesData.last_page || 1; // Use backend's last_page
+        channelState.total = messagesData.total_record || 0;
+        // **** THIS IS THE KEY FIX ****
+        // Update currentPage to the page number that was just fetched
+        channelState.currentPage = fetchedPage;
+        // **** END KEY FIX ****
+        channelState.loading = false; // Ensure loading is false after adding
+        channelState.error = null; // Clear any previous error
+
         console.log(
-          `Store: Added page ${fetchedPage} for channel ${channelId}. Oldest fetched: ${channelState.oldestPageFetched}`
+          `Store: Added page ${fetchedPage} for channel ${channelId}. Current highest page fetched: ${channelState.currentPage}, Last page from API: ${channelState.lastPage}`
         );
       })
     ),
@@ -167,15 +163,25 @@ const useChatStore = create((set, get) => ({
         const messageList = state.messages[channelId].messages;
         const existingIndex = messageList.findIndex((m) => m.id === message.id);
 
+        // Append ONLY if it doesn't exist.
         if (existingIndex === -1) {
-          messageList.push(message); // Append new message
+          // Push new message to the end (most recent)
+          messageList.push(message);
+          // Ensure total is updated correctly
           state.messages[channelId].total =
             (state.messages[channelId].total || 0) + 1;
+          // Check if adding this message means we are now on the last page (if previously not)
+          // This might need more complex logic if total % per_page === 1, etc.
+          // Let's rely on the backend's lastPage value for now.
         } else {
+          // Optionally update if it exists (e.g., status change came with it)
+          messageList[existingIndex] = {
+            ...messageList[existingIndex],
+            ...message,
+          };
           console.warn(
-            `addNewMessage: Message ID ${message.id} already exists. Updating.`
+            `addNewMessage: Message ID ${message.id} already exists. Updated in place.`
           );
-          messageList[existingIndex] = message; // Update if exists (e.g., correction)
         }
 
         // Update Channel List Preview
@@ -192,6 +198,7 @@ const useChatStore = create((set, get) => ({
             state.channels[channelIndex].unread_message_count =
               (state.channels[channelIndex].unread_message_count || 0) + 1;
           } else if (state.activeChannelId === channelId) {
+            // If user is in the channel, mark as read
             state.channels[channelIndex].unread_message_count = 0;
           }
         }
@@ -207,75 +214,63 @@ const useChatStore = create((set, get) => ({
         });
       })
     ),
-  updateMessageStatuses: (
-    channelId,
-    updates // updates = [{ messageId, read_at?, delivered_at? }]
-  ) =>
+
+  updateExistingMessage: (channelId, updatedMessageData) =>
     set(
       produce((state) => {
-        if (!state.messages[channelId]?.messages) return;
+        if (!state.messages[channelId]?.messages) return; // No messages loaded for this channel
 
-        const messageMap = new Map(
-          state.messages[channelId].messages.map((msg) => [msg.id, msg])
+        const messageIndex = state.messages[channelId].messages.findIndex(
+          (m) => m.id === updatedMessageData.id
         );
-        let latestMessageUpdated = false;
-        const latestMsgIdInChannel = state.channels.find(
-          (c) => c.id === channelId
-        )?.latest_message?.id;
 
-        updates.forEach((update) => {
-          const message = messageMap.get(update.messageId);
-          if (message) {
-            let changed = false;
-            if (
-              update.delivered_at &&
-              (!message.delivered_at ||
-                new Date(update.delivered_at) > new Date(message.delivered_at))
-            ) {
-              message.delivered_at = update.delivered_at;
-              changed = true;
-            }
-            if (
-              update.read_at &&
-              (!message.read_at ||
-                new Date(update.read_at) > new Date(message.read_at))
-            ) {
-              message.read_at = update.read_at;
-              changed = true;
-            }
-            if (changed && message.id === latestMsgIdInChannel) {
-              latestMessageUpdated = true; // Mark if the latest message needs update in channel list
-            }
-          }
-        });
+        if (messageIndex !== -1) {
+          // Merge existing message with updates
+          state.messages[channelId].messages[messageIndex] = {
+            ...state.messages[channelId].messages[messageIndex],
+            ...updatedMessageData,
+          };
 
-        // Update messages array from map
-        state.messages[channelId].messages = Array.from(messageMap.values());
-
-        // Update latest_message in channels list if it was affected
-        if (latestMessageUpdated) {
+          // Update latest message in channel list if it was the one updated
           const channelIndex = state.channels.findIndex(
             (c) => c.id === channelId
           );
-          if (channelIndex > -1) {
-            // Find the full updated message object from our map
-            const updatedLatest = messageMap.get(latestMsgIdInChannel);
-            if (updatedLatest) {
-              state.channels[channelIndex].latest_message = updatedLatest;
-            }
+          if (
+            channelIndex > -1 &&
+            state.channels[channelIndex].latest_message?.id ===
+              updatedMessageData.id
+          ) {
+            state.channels[channelIndex].latest_message = {
+              ...state.channels[channelIndex].latest_message,
+              ...updatedMessageData,
+            };
           }
+        } else {
+          console.warn(
+            `updateExistingMessage: Message ID ${updatedMessageData.id} not found in channel ${channelId}`
+          );
         }
       })
     ),
+
   removeMessage: (channelId, messageId) =>
     set(
       produce((state) => {
         if (state.messages[channelId]) {
+          const initialLength = state.messages[channelId].messages.length;
           state.messages[channelId].messages = state.messages[
             channelId
           ].messages.filter((m) => m.id !== messageId);
+          const finalLength = state.messages[channelId].messages.length;
+          // Decrement total if a message was actually removed
+          if (finalLength < initialLength) {
+            state.messages[channelId].total = Math.max(
+              0,
+              (state.messages[channelId].total || 0) - 1
+            );
+          }
         }
-        // Also update the latest message in the channels list if it's the one deleted
+        // Update channel list preview if the deleted message was the latest one
         const channelIndex = state.channels.findIndex(
           (c) => c.id === channelId
         );
@@ -283,14 +278,44 @@ const useChatStore = create((set, get) => ({
           channelIndex > -1 &&
           state.channels[channelIndex].latest_message?.id === messageId
         ) {
-          // Need to fetch the *new* latest message or set to null/placeholder
-          // Simplification: set latest_message to null or find previous one (complex)
-          // For now, just remove it visually from the message list
-          // TODO: A better approach would be to refetch channel list or have backend push new latest message
-          console.warn(
-            "Latest message deleted, channel list preview might be outdated. Re-fetch channels recommended."
-          );
-          // state.channels[channelIndex].latest_message = null; // Or fetch previous
+          // Find the new latest message (the one before the deleted one in the sorted list)
+          const remainingMessages = state.messages[channelId]?.messages || [];
+          if (remainingMessages.length > 0) {
+            // Messages are sorted ascending, so the last one is the newest
+            state.channels[channelIndex].latest_message =
+              remainingMessages[remainingMessages.length - 1];
+          } else {
+            state.channels[channelIndex].latest_message = null; // No messages left
+          }
+          // Re-sort channels list might be needed if sorting relies on latest_message content/time
+          state.channels.sort((a, b) => {
+            /* ... sort logic ... */
+          });
+        }
+      })
+    ),
+
+  clearMessagesForChannel: (channelId) =>
+    set(
+      produce((state) => {
+        if (state.messages[channelId]) {
+          state.messages[channelId].messages = [];
+          state.messages[channelId].currentPage = 0; // Reset pagination
+          state.messages[channelId].lastPage = 1;
+          state.messages[channelId].total = 0;
+          state.messages[channelId].loading = false;
+          state.messages[channelId].error = null;
+        }
+        const channelIndex = state.channels.findIndex(
+          (c) => c.id === channelId
+        );
+        if (channelIndex > -1) {
+          state.channels[channelIndex].latest_message = null;
+          state.channels[channelIndex].unread_message_count = 0;
+          // Re-sort channels list might be needed
+          state.channels.sort((a, b) => {
+            /* ... sort logic ... */
+          });
         }
       })
     ),
@@ -405,31 +430,6 @@ const useChatStore = create((set, get) => ({
       })
     ),
 
-  clearMessagesForChannel: (channelId) =>
-    set(
-      produce((state) => {
-        if (state.messages[channelId]) {
-          state.messages[channelId].messages = [];
-          // Reset pagination? Maybe not necessary if backend handles it.
-          // state.messages[channelId].currentPage = 1;
-          // state.messages[channelId].lastPage = 1;
-          state.messages[channelId].total = 0;
-        }
-        // Also update the channel list preview
-        const channelIndex = state.channels.findIndex(
-          (c) => c.id === channelId
-        );
-        if (channelIndex > -1) {
-          state.channels[channelIndex].latest_message = null; // Clear latest message preview
-          state.channels[channelIndex].unread_message_count = 0; // Assume cleared means read
-          // Re-sort might be needed if latest_message becomes null
-          state.channels.sort((a, b) => {
-            /* ... sort logic ... */
-          });
-        }
-      })
-    ),
-
   updateChannelUserStatus: (userId, isOnline, lastSeenAt) =>
     set(
       produce((state) => {
@@ -492,14 +492,18 @@ const useChatStore = create((set, get) => ({
       produce((state) => {
         if (!state.messages[channelId]?.messages) return; // Channel messages not loaded
 
-        // Create a map for faster lookup
         const messageMap = new Map(
           state.messages[channelId].messages.map((msg) => [msg.id, msg])
         );
+        let latestMessageUpdated = false; // Flag to check if channel preview needs update
+        const latestMsgIdInChannel = state.channels.find(
+          (c) => c.id === channelId
+        )?.latest_message?.id;
 
         updates.forEach((update) => {
           const message = messageMap.get(update.messageId);
           if (message) {
+            let changed = false;
             // Only update if the new timestamp is later (or first time)
             if (
               update.delivered_at &&
@@ -507,6 +511,7 @@ const useChatStore = create((set, get) => ({
                 new Date(update.delivered_at) > new Date(message.delivered_at))
             ) {
               message.delivered_at = update.delivered_at;
+              changed = true;
             }
             if (
               update.read_at &&
@@ -514,6 +519,10 @@ const useChatStore = create((set, get) => ({
                 new Date(update.read_at) > new Date(message.read_at))
             ) {
               message.read_at = update.read_at;
+              changed = true;
+            }
+            if (changed && message.id === latestMsgIdInChannel) {
+              latestMessageUpdated = true;
             }
           }
         });
@@ -522,21 +531,15 @@ const useChatStore = create((set, get) => ({
         state.messages[channelId].messages = Array.from(messageMap.values());
 
         // Also update the latest message in the channel list if affected
-        const channelIndex = state.channels.findIndex(
-          (c) => c.id === channelId
-        );
-        if (channelIndex > -1 && state.channels[channelIndex].latest_message) {
-          const latestMsgId = state.channels[channelIndex].latest_message.id;
-          const updateForLatest = updates.find(
-            (u) => u.messageId === latestMsgId
+        if (latestMessageUpdated) {
+          const channelIndex = state.channels.findIndex(
+            (c) => c.id === channelId
           );
-          if (updateForLatest) {
-            if (updateForLatest.delivered_at)
-              state.channels[channelIndex].latest_message.delivered_at =
-                updateForLatest.delivered_at;
-            if (updateForLatest.read_at)
-              state.channels[channelIndex].latest_message.read_at =
-                updateForLatest.read_at;
+          if (channelIndex > -1) {
+            const updatedLatest = messageMap.get(latestMsgIdInChannel);
+            if (updatedLatest) {
+              state.channels[channelIndex].latest_message = updatedLatest;
+            }
           }
         }
       })

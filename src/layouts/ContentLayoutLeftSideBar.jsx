@@ -8,7 +8,7 @@ export default function ContentLayoutLeftSideBar({ children }) {
           <LeftSidebar />
         </div>
 
-        <div className="col-span-12 md:col-span-9 lg:col-span-9 overflow-y-scroll no_scrollbar relative">
+        <div className="col-span-12 md:col-span-9 lg:col-span-9 overflow-hidden h-full relative">
           {children}
         </div>
       </div>

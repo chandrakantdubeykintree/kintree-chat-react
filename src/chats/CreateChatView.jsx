@@ -1,4 +1,4 @@
-// frontend/src/components/CreateChatView.jsx
+// frontend/src/components/chats/CreateChatView.jsx
 import React, { useState, useEffect } from "react";
 import {
   Dialog,

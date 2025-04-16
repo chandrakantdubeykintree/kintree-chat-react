@@ -1,4 +1,4 @@
-// components/DateSeparator.jsx
+// components/chats/DateSeparator.jsx
 import React from "react";
 
 const DateSeparator = ({ date }) => {

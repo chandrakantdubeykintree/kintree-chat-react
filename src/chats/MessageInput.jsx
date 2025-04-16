@@ -1,4 +1,4 @@
-// frontend/src/components/MessageInput.jsx
+// frontend/src/components/chats/MessageInput.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";

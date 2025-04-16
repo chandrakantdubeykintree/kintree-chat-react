@@ -1,4 +1,3 @@
-// frontend/src/services/apiService.js
 import axios from "axios";
 import useAuthStore from "./useAuthStore"; // To get base URL if needed from PHP
 import { kintreeApi } from "@/services/kintreeApi";

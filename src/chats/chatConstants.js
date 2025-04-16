@@ -1,4 +1,4 @@
-// frontend/src/constants/index.js
+// frontend/src/chats/chatConstants.js
 export const SOCKET_EVENTS = {
   CONNECT: "connect",
   DISCONNECT: "disconnect",

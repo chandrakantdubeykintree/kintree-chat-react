@@ -1,4 +1,4 @@
-// frontend/src/components/ChatList.jsx
+// frontend/src/components/chats/ChatList.jsx
 import React from "react";
 import useChatStore from "./useChatStore";
 import ChatListItem from "./ChatListItem";
@@ -26,9 +26,10 @@ const ChatList = ({ onSelectChat, onInitiateCreateChat }) => {
   };
 
   return (
-    <div className="flex flex-col h-full border-r bg-background">
+    <div className="flex flex-col h-full bg-background border-r overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b">
+      <div className="p-4 border-b flex-shrink-0">
+        {/* Added flex-shrink-0 */}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Chats</h2>
           <Button
@@ -49,62 +50,65 @@ const ChatList = ({ onSelectChat, onInitiateCreateChat }) => {
       </div>
 
       {/* Chat List Area */}
-      <ScrollArea className="flex-1">
-        {!loadingChannels &&
-          !channelError &&
-          filteredChannels.length === 0 &&
-          channels.length > 0 && (
-            <div className="p-4 text-center text-muted-foreground">
-              No matching chats found.
+      {/* Chat List Scroll Area (Grid Row 2 - 1fr height, handles overflow) */}
+      <ScrollArea className="flex-1 min-h-0 overflow-y-auto no_scrollbar">
+        <div className="p-2 space-y-1">
+          {/* Loading State */}
+          {loadingChannels && (
+            <div className="p-4 space-y-3">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="flex items-center space-x-3">
+                  <Skeleton className="h-12 w-12 rounded-full" />
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
-        {!loadingChannels && !channelError && channels.length === 0 && (
-          <div className="p-4 text-center text-muted-foreground flex flex-col items-center">
-            <span>No chats yet.</span>
-            <Button
-              variant="link"
-              onClick={handleCreateChatClick}
-              className="mt-1"
-            >
-              Start a new conversation!
-            </Button>
-          </div>
-        )}
-        {loadingChannels && (
-          <div className="p-4 space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="flex items-center space-x-3">
-                <Skeleton className="h-12 w-12 rounded-full" />
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3 w-1/2" />
-                </div>
+
+          {/* Error State */}
+          {!loadingChannels && channelError && (
+            <div className="p-4 text-center text-destructive">
+              Error loading chats: {channelError}
+            </div>
+          )}
+
+          {/* Empty/No Match State */}
+          {!loadingChannels &&
+            !channelError &&
+            filteredChannels.length === 0 && (
+              <div className="p-4 text-center text-muted-foreground flex flex-col items-center h-full justify-center">
+                {channels.length === 0 ? (
+                  <>
+                    <span>No chats yet.</span>
+                    <Button
+                      variant="link"
+                      onClick={handleCreateChatClick}
+                      className="mt-1"
+                    >
+                      Start a new conversation!
+                    </Button>
+                  </>
+                ) : (
+                  "No matching chats found."
+                )}
               </div>
+            )}
+
+          {/* Channel List Items */}
+          {!loadingChannels &&
+            !channelError &&
+            filteredChannels.map((channel) => (
+              <ChatListItem
+                key={channel.id}
+                channel={channel}
+                isActive={channel.id === activeChannelId}
+                onClick={() => onSelectChat(channel.id)}
+              />
             ))}
-          </div>
-        )}
-        {!loadingChannels && channelError && (
-          <div className="p-4 text-center text-destructive">
-            Error loading chats: {channelError}
-          </div>
-        )}
-        {!loadingChannels && !channelError && filteredChannels.length === 0 && (
-          <div className="p-4 text-center text-muted-foreground">
-            {channels.length === 0
-              ? "No chats yet. Start a new conversation!"
-              : "No matching chats found."}
-          </div>
-        )}
-        {!loadingChannels &&
-          !channelError &&
-          filteredChannels.map((channel) => (
-            <ChatListItem
-              key={channel.id}
-              channel={channel}
-              isActive={channel.id === activeChannelId}
-              onClick={() => onSelectChat(channel.id)}
-            />
-          ))}
+        </div>
       </ScrollArea>
     </div>
   );
