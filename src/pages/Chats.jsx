@@ -237,9 +237,17 @@ const Chats = () => {
 
   return (
     // Use Card as the top-level container with desired styling
-    <Card className="bg-background rounded-2xl h-full overflow-hidden w-full">
+    <Card
+      className="bg-background rounded-2xl h-full w-full flex flex-col overflow-hidden"
+      data-safe-focus
+      tabIndex="0" // Make it focusable with tabIndex="0" not "-1"
+      id="chat-card-container"
+    >
       {/* --- Drawers outside the main layout grid --- */}
-      <Drawer open={isCreateChatOpen} onOpenChange={setIsCreateChatOpen}>
+      <Drawer
+        open={isCreateChatOpen}
+        onOpenChange={(open) => setIsCreateChatOpen(open)}
+      >
         <DrawerContent className="h-[85%] sm:h-[70%]">
           <div className="flex flex-col h-full w-full max-w-xl mx-auto">
             <DrawerHeader className="flex-shrink-0">
@@ -255,7 +263,10 @@ const Chats = () => {
         </DrawerContent>
       </Drawer>
 
-      <Drawer open={isContactInfoOpen} onOpenChange={setIsContactInfoOpen}>
+      <Drawer
+        open={isContactInfoOpen}
+        onOpenChange={(open) => setIsContactInfoOpen(open)}
+      >
         <DrawerContent className="h-[85%] sm:h-[70%]">
           <div className="flex flex-col h-full w-full max-w-md mx-auto">
             <DrawerHeader className="flex-shrink-0 text-left">
@@ -272,7 +283,10 @@ const Chats = () => {
         </DrawerContent>
       </Drawer>
 
-      <Drawer open={isMessageInfoOpen} onOpenChange={setIsMessageInfoOpen}>
+      <Drawer
+        open={isMessageInfoOpen}
+        onOpenChange={(open) => setIsMessageInfoOpen(open)}
+      >
         <DrawerContent className="h-auto max-h-[50%]">
           <div className="flex flex-col h-full w-full max-w-md mx-auto p-4">
             <DrawerHeader className="p-0 mb-4 text-left">
@@ -286,12 +300,12 @@ const Chats = () => {
       </Drawer>
 
       {/* --- Main Grid Layout for Chat --- */}
-      <div className="grid h-full grid-cols-1 md:grid-cols-[auto_1fr] overflow-hidden">
+      <div className="flex-1 flex overflow-hidden">
         {/* Chat List Pane - Grid Area 1 */}
         <div
           className={cn(
             "w-full md:w-[300px] lg:w-[340px]", // Define width for 'auto' column
-            "h-full", // Fill grid row height
+            "h-full flex-shrink-0", // Fill grid row height
             "border-r bg-background",
             "transition-transform duration-300 ease-in-out",
             !showChatList ? "hidden md:block" : "block"
@@ -305,7 +319,10 @@ const Chats = () => {
 
         {/* Chat Window Pane - Grid Area 2 */}
         <div
-          className={cn("h-full", showChatList ? "hidden md:block" : "block")}
+          className={cn(
+            "h-full flex-1 min-w-0",
+            showChatList ? "hidden md:block" : "block"
+          )}
         >
           {activeChannelId ? ( // Conditionally render ChatWindow only if ID exists
             <ChatWindow

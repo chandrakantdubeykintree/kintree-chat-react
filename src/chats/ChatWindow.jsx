@@ -1,18 +1,11 @@
 // frontend/src/components/chats/ChatWindow.jsx
-import React, {
-  useEffect,
-  useRef,
-  useState,
-  useCallback,
-  useMemo,
-} from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import useChatStore from "./useChatStore";
 import {
   fetchMessages, // Make sure this is correctly imported
   emitSendMessage,
   emitEditMessage,
   emitDeleteMessage,
-  emitMarkMessageRead,
   emitMarkAllRead,
   // emitClearChat, // These might be called from Header
   // emitDeleteChannel, // These might be called from Header
@@ -20,7 +13,6 @@ import {
 import MessageBubble from "./MessageBubble";
 import MessageInput from "./MessageInput";
 import ChatWindowHeader from "./ChatWindowHeader";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -177,18 +169,18 @@ const ChatWindow = ({
     const currentChannelData = state.messages[channelId];
 
     // Check conditions using the latest state
-    if (
-      !channelId ||
-      !currentChannelData ||
-      currentChannelData.loading ||
-      currentChannelData.currentPage >= currentChannelData.lastPage
-    ) {
-      console.log("Load More: Conditions not met", {
-        loading: currentChannelData?.loading,
-        currentPage: currentChannelData?.currentPage,
-        lastPage: currentChannelData?.lastPage,
-        channelId,
-      });
+    if (!channelId || !currentChannelData) {
+      console.log("Load More: Cannot load - channel data not found");
+      return;
+    }
+
+    if (currentChannelData.loading) {
+      console.log("Load More: Already loading messages");
+      return;
+    }
+
+    if (currentChannelData.currentPage >= currentChannelData.lastPage) {
+      console.log("Load More: No more pages to load");
       return;
     }
 
@@ -196,22 +188,28 @@ const ChatWindow = ({
     console.log(
       `Load More: Requesting page ${nextPage} for channel ${channelId}`
     );
-    fetchMessages(channelId, nextPage); // fetchMessages now returns a promise, but we don't need to await it here
-  }, [channelId]); // Dependency: channelId (fetchMessages uses channelId)
+
+    fetchMessages(channelId, nextPage)
+      .then(() => {
+        console.log(`Successfully loaded page ${nextPage}`);
+      })
+      .catch((error) => {
+        console.error(`Error loading page ${nextPage}:`, error);
+      });
+  }, [channelId]);
 
   // Effect to setup the Intersection Observer
   useEffect(() => {
-    const scrollViewport = scrollAreaRef.current?.children[1]; // Viewport is the root
-    const targetElement = topMessageObserverTargetRef.current; // Element to observe
+    // Reference to the scrollable div element
+    const scrollContainer = scrollAreaRef.current;
+    const targetElement = topMessageObserverTargetRef.current;
 
-    // Only setup if viewport, target exist, and there are more pages to load
     if (
-      !scrollViewport ||
+      !scrollContainer ||
       !targetElement ||
       loading ||
       currentPage >= lastPage
     ) {
-      // If observer exists, disconnect it if conditions are no longer met
       if (observer.current) {
         observer.current.disconnect();
         console.log("Observer disconnected (conditions not met).");
@@ -219,49 +217,41 @@ const ChatWindow = ({
       return;
     }
 
-    console.log("Setting up Intersection Observer...");
-
     const intersectionCallback = (entries) => {
       const entry = entries[0];
       if (entry.isIntersecting && !loading && currentPage < lastPage) {
         console.log(
-          "Intersection Observer: Target is intersecting, calling loadMoreMessages."
+          "Target element is visible in viewport, loading more messages"
         );
         loadMoreMessages();
       } else {
-        // Optional: Log why it's not loading
-        if (entry.isIntersecting) {
-          console.log(
-            "Intersection Observer: Target intersecting, but not loading.",
-            { loading, currentPage, lastPage }
-          );
-        }
+        console.log("Target not intersecting or already loading", {
+          isIntersecting: entry.isIntersecting,
+          loading,
+          currentPage,
+          lastPage,
+        });
       }
     };
 
-    // Create observer if it doesn't exist
-    if (!observer.current) {
-      observer.current = new IntersectionObserver(intersectionCallback, {
-        root: scrollViewport, // Observe within the scrollable viewport
-        threshold: 0.1, // Trigger when 10% visible
-        // rootMargin: '100px 0px 0px 0px' // Optional: Load slightly before it's visible
-      });
-    }
+    // Create and configure new observer
+    observer.current = new IntersectionObserver(intersectionCallback, {
+      root: null, // Use viewport as root
+      threshold: 0.1, // Trigger when 10% visible
+      rootMargin: "20px", // Add margin to trigger a bit earlier
+    });
 
-    // Observe the target
+    // Start observing target
     observer.current.observe(targetElement);
-    console.log("Observer is now observing the target.");
+    console.log("Observer now monitoring target element for intersection");
 
-    // Cleanup function
     return () => {
       if (observer.current) {
         observer.current.disconnect();
-        console.log("Observer disconnected on cleanup.");
-        // observer.current = null; // Optionally nullify the ref
+        console.log("Observer disconnected on cleanup");
       }
     };
-    // Dependencies: Recalculate when these change, especially after loading finishes or page numbers update
-  }, [loadMoreMessages, loading, currentPage, lastPage, channelId]); // Added channelId
+  }, [loadMoreMessages, loading, currentPage, lastPage, channelId]);
 
   // Mark messages as read (logic seems okay, depends on channel data)
   useEffect(() => {
@@ -276,6 +266,37 @@ const ChatWindow = ({
       return () => clearTimeout(timer);
     }
   }, [channelId, channel]); // Depend on channelId and the channel object itself
+
+  // Preserve scroll position when loading older messages
+  useEffect(() => {
+    if (loading) {
+      // Store the scroll height and position before loading new messages
+      const scrollContainer = scrollAreaRef.current;
+      if (scrollContainer) {
+        const prevScrollHeight = scrollContainer.scrollHeight;
+        const prevScrollTop = scrollContainer.scrollTop;
+
+        // After the DOM updates with new messages
+        const handleUpdate = () => {
+          if (scrollContainer) {
+            // Calculate how much the scroll height has increased
+            const newScrollHeight = scrollContainer.scrollHeight;
+            const heightDiff = newScrollHeight - prevScrollHeight;
+
+            // Adjust scroll position to keep the same content in view
+            if (heightDiff > 0 && currentPage > 1) {
+              scrollContainer.scrollTop = prevScrollTop + heightDiff;
+              console.log(`Adjusted scroll position by ${heightDiff}px`);
+            }
+          }
+        };
+
+        // Use setTimeout to run after DOM update
+        const timerId = setTimeout(handleUpdate, 50);
+        return () => clearTimeout(timerId);
+      }
+    }
+  }, [loading, messages.length, currentPage]);
 
   // --- Event Handlers (mostly unchanged) ---
   const handleSendMessage = async (chId, messageText, attachmentId = null) => {
@@ -456,9 +477,9 @@ const ChatWindow = ({
 
   // Channel selected, rendering chat interface
   return (
-    <div className="flex flex-col h-full bg-muted/20 border overflow-hidden">
-      {/* Header (Row 1 - Auto Height) */}
-      <div className="flex-shrink-0 border-b">
+    <div className="flex flex-col h-full">
+      {/* Header (Row 1 - Fixed Height) */}
+      <div className="flex-shrink-0 sticky top-0 z-10 bg-background border-b">
         {channel ? (
           <ChatWindowHeader
             channel={channel}
@@ -466,45 +487,47 @@ const ChatWindow = ({
             onViewContactInfo={onViewContactInfo}
           />
         ) : (
-          <div className="flex items-center p-3 border-b h-[69px] bg-background">
+          <div className="flex items-center p-3 h-[69px]">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
           </div>
         )}
       </div>
 
-      {/* Message Scroll Area (Row 2 - 1fr Height, handles overflow) */}
-      <ScrollArea
-        ref={scrollAreaRef}
-        className="flex-1 min-h-0 overflow-y-auto no_scrollbar"
-      >
-        {/* Observer Target */}
+      {/* Message Scroll Area (Row 2 - Flexible Height) */}
+      <div className="flex-1 overflow-y-auto" ref={scrollAreaRef}>
+        {/* Observer Target at the top - this is what gets watched for scrolling up */}
         {currentPage < lastPage && (
           <div
             ref={topMessageObserverTargetRef}
-            className="h-10 flex justify-center items-center"
+            className="h-10 flex justify-center items-center sticky top-0"
           >
             {loading && (
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            )}
+            {!loading && (
+              <div className="text-xs text-muted-foreground">
+                Scroll up to load more
+              </div>
             )}
           </div>
         )}
 
         {/* Messages */}
-        <div className="space-y-1 pb-4">{messagesWithSeparators}</div>
+        <div className="space-y-1 p-4">{messagesWithSeparators}</div>
 
         {/* Empty State */}
         {initialLoadComplete && messages.length === 0 && !error && !loading && (
-          <div className="flex justify-center items-center h-full text-muted-foreground">
+          <div className="flex justify-center items-center text-muted-foreground py-10">
             <p>No messages yet. Start the conversation!</p>
           </div>
         )}
 
         {/* Scroll Anchor */}
         <div ref={messagesEndRef} className="h-1" />
-      </ScrollArea>
+      </div>
 
-      {/* Message Input */}
-      <div className="flex-shrink-0 border-t">
+      {/* Message Input (Row 3 - Fixed Height) */}
+      <div className="flex-shrink-0 sticky bottom-0 bg-background border-t">
         <MessageInput
           channelId={channelId}
           onSendMessage={handleSendMessage}

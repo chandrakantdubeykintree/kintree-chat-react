@@ -26,10 +26,9 @@ const ChatList = ({ onSelectChat, onInitiateCreateChat }) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-background border-r overflow-hidden">
-      {/* Header */}
-      <div className="p-4 border-b flex-shrink-0">
-        {/* Added flex-shrink-0 */}
+    <div className="flex flex-col h-full">
+      {/* Header - Fixed height */}
+      <div className="sticky top-0 z-10 bg-background border-b p-4">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Chats</h2>
           <Button
@@ -49,9 +48,11 @@ const ChatList = ({ onSelectChat, onInitiateCreateChat }) => {
         />
       </div>
 
-      {/* Chat List Area */}
-      {/* Chat List Scroll Area (Grid Row 2 - 1fr height, handles overflow) */}
-      <ScrollArea className="flex-1 min-h-0 overflow-y-auto no_scrollbar">
+      {/* Chat List - Flexible height with scroll */}
+      <div
+        className="flex-1 overflow-y-auto"
+        style={{ height: "calc(100% - 113px)" }}
+      >
         <div className="p-2 space-y-1">
           {/* Loading State */}
           {loadingChannels && (
@@ -68,18 +69,29 @@ const ChatList = ({ onSelectChat, onInitiateCreateChat }) => {
             </div>
           )}
 
-          {/* Error State */}
+          {/* Channel List Items */}
+          {!loadingChannels &&
+            !channelError &&
+            filteredChannels.map((channel) => (
+              <ChatListItem
+                key={channel.id}
+                channel={channel}
+                isActive={channel.id === activeChannelId}
+                onClick={() => onSelectChat(channel.id)}
+              />
+            ))}
+
+          {/* Empty/Error States */}
           {!loadingChannels && channelError && (
             <div className="p-4 text-center text-destructive">
               Error loading chats: {channelError}
             </div>
           )}
 
-          {/* Empty/No Match State */}
           {!loadingChannels &&
             !channelError &&
             filteredChannels.length === 0 && (
-              <div className="p-4 text-center text-muted-foreground flex flex-col items-center h-full justify-center">
+              <div className="p-4 text-center text-muted-foreground">
                 {channels.length === 0 ? (
                   <>
                     <span>No chats yet.</span>
@@ -96,20 +108,8 @@ const ChatList = ({ onSelectChat, onInitiateCreateChat }) => {
                 )}
               </div>
             )}
-
-          {/* Channel List Items */}
-          {!loadingChannels &&
-            !channelError &&
-            filteredChannels.map((channel) => (
-              <ChatListItem
-                key={channel.id}
-                channel={channel}
-                isActive={channel.id === activeChannelId}
-                onClick={() => onSelectChat(channel.id)}
-              />
-            ))}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 };
