@@ -44,6 +44,12 @@ const ChatWindow = ({
       [channelId]
     )
   );
+
+  // Intersection Observer for infinite scroll (Corrected)
+  const observer = useRef();
+  const isLoadingMessages = channelMessagesData.loading;
+  console.log("channelMessagesData", channelMessagesData);
+
   const selectedMessagesMap = useChatStore((state) => state.selectedMessages);
   const isSelecting = useChatStore((state) => state.isSelecting);
 
@@ -164,9 +170,6 @@ const ChatWindow = ({
     isSelecting,
   ]);
 
-  // Intersection Observer for infinite scroll (Corrected)
-  const observer = useRef();
-
   // Memoized callback to load more messages
   const loadMoreMessages = useCallback(() => {
     // Read state directly inside the callback to get the latest values
@@ -265,29 +268,35 @@ const ChatWindow = ({
 
   // Effect to setup the Intersection Observer
   useEffect(() => {
+    console.log(
+      `[Observer Effect Check] Running. initialLoadComplete: ${initialLoadComplete}, currentPage: ${currentPage}, lastPage: ${lastPage}, targetRef Exists: ${!!topMessageObserverTargetRef.current}`
+    );
+    const targetElement = topMessageObserverTargetRef.current;
     // Wait for initial load AND ensure there are more pages to load
     if (
       !initialLoadComplete ||
       currentPage >= lastPage ||
-      !topMessageObserverTargetRef.current
+      !targetElement ||
+      isLoadingMessages
     ) {
-      // If observer exists, disconnect it if conditions aren't met
       if (observer.current) {
+        console.log(
+          "[Observer Effect] Conditions not met or loading. Disconnecting observer."
+        );
         observer.current.disconnect();
       }
-      return; // Don't setup if initial load not done or no more pages
+      console.log("[Observer Effect] Skipping setup.");
+      return;
     }
-
-    const targetElement = topMessageObserverTargetRef.current;
 
     // Define the callback *inside* the effect to capture correct state
     const intersectionCallback = (entries) => {
       const entry = entries[0];
-      // Get the LATEST loading state directly inside the callback
-      const isLoading = useChatStore.getState().messages[channelId]?.loading;
+
+      const stillLoading = useChatStore.getState().messages[channelId]?.loading;
 
       // Check intersection AND ensure we are not already loading
-      if (entry.isIntersecting && !isLoading) {
+      if (entry.isIntersecting && !stillLoading) {
         loadMoreMessages();
       } else {
         console.log(
@@ -301,14 +310,21 @@ const ChatWindow = ({
       observer.current.disconnect();
     }
 
-    observer.current = new IntersectionObserver(intersectionCallback, {
-      root: scrollAreaRef.current?.children[1], // Observe within the scroll viewport
-      rootMargin: "100px 0px 0px 0px", // Trigger when target is 100px from top edge of viewport
-      threshold: 0.1, // Trigger when 10% is visible (can adjust)
-    });
+    try {
+      observer.current = new IntersectionObserver(intersectionCallback, {
+        // ***** REVERT TO OLD WORKING OPTIONS *****
+        // root: null, // Use viewport root
+        root: null,
+        rootMargin: "50px 0px 0px 0px", // Use smaller top margin (20px example)
+        threshold: 0.8, // Use higher threshold (10% example)
+        // ***** END REVERT *****
+      });
 
-    // Start observing target
-    observer.current.observe(targetElement);
+      observer.current.observe(targetElement);
+      console.log("[Observer Effect] Observing target element.");
+    } catch (e) {
+      console.error("[Observer Effect] Error creating or observing:", e);
+    }
 
     // Return cleanup function to disconnect observer
     return () => {
@@ -317,7 +333,14 @@ const ChatWindow = ({
       }
     };
     // Rerun when initial load completes, or pagination changes, or target ref available
-  }, [initialLoadComplete, currentPage, lastPage, channelId, loadMoreMessages]);
+  }, [
+    initialLoadComplete,
+    currentPage,
+    lastPage,
+    channelId,
+    loadMoreMessages,
+    isLoadingMessages,
+  ]);
 
   useEffect(() => {
     if (channelId && channel && initialLoadComplete) {
