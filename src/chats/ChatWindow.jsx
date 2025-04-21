@@ -22,6 +22,8 @@ import { uploadAttachment } from "./apiService";
 import useAuthStore from "./useAuthStore";
 import { isSameDay, format, isYesterday, isToday } from "date-fns";
 import DateSeparator from "./date-separator";
+import { useUploadAttachment } from "@/hooks/useAttachments";
+import AttachmentInputPreview from "./AttachmentInputPreview";
 
 const ChatWindow = ({
   channelId,
@@ -44,6 +46,7 @@ const ChatWindow = ({
   );
   const selectedMessagesMap = useChatStore((state) => state.selectedMessages);
   const isSelecting = useChatStore((state) => state.isSelecting);
+
   const toggleMessageSelection = useChatStore(
     (state) => state.toggleMessageSelection
   );
@@ -77,10 +80,20 @@ const ChatWindow = ({
 
   const [editingMessage, setEditingMessage] = useState(null);
   const [isSending, setIsSending] = useState(false);
+  const [attachmentForPreview, setAttachmentForPreview] = useState(null);
   const scrollAreaRef = useRef(null);
   const messagesEndRef = useRef(null);
   const topMessageObserverTargetRef = useRef(null); // Renamed for clarity
   const [initialLoadComplete, setInitialLoadComplete] = useState(false); // Track initial load
+  const originalFileRef = useRef(null);
+
+  const {
+    mutate: triggerUpload, // Function to call to start upload
+    isPending: isUploading, // Derived loading state from hook
+    data: uploadMutationData, // Raw success data from the mutation's onSuccess
+    error: uploadError, // Error object from the mutation
+    reset: resetUploadMutation, // Function to reset the mutation state
+  } = useUploadAttachment();
 
   // --- Effects ---
 
@@ -113,7 +126,7 @@ const ChatWindow = ({
         observer.current.disconnect();
       }
     };
-  }, [channelId, resetMessagesForChannel]); // Depend only on channelId and the reset action
+  }, [channelId, resetMessagesForChannel, resetUploadMutation]); // Depend only on channelId and the reset action
 
   // Scroll to bottom logic
   useEffect(() => {
@@ -179,6 +192,76 @@ const ChatWindow = ({
         console.error(`Error loading page ${nextPage}:`, error);
       });
   }, [channelId]);
+
+  // Effect to process successful upload data
+  useEffect(() => {
+    // Check if mutation succeeded and returned expected data structure
+    // Adjust 'uploadMutationData.data?.[0]?.id' based on your actual hook/API response
+    if (
+      uploadMutationData?.success &&
+      uploadMutationData?.data?.[0]?.id &&
+      originalFileRef.current
+    ) {
+      console.log(
+        "[ChatWindow] Upload success, setting attachment preview:",
+        uploadMutationData.data[0]
+      );
+      setAttachmentForPreview({
+        file: originalFileRef.current, // Keep original file info if needed for preview
+        data: uploadMutationData.data[0], // Store server response (containing ID, URL, etc.)
+      });
+      originalFileRef.current = null; // Clear the ref after processing
+      // Don't resetUploadMutation here, wait until message is sent or preview cancelled
+    } else if (uploadMutationData && !uploadMutationData.success) {
+      // Handle cases where mutation finishes but API reports failure
+      console.warn(
+        "[ChatWindow] Upload mutation finished but API reported failure:",
+        uploadMutationData.message
+      );
+      toast.error("Upload Failed", {
+        description:
+          uploadMutationData.message || "Server couldn't process the file.",
+      });
+      originalFileRef.current = null;
+      resetUploadMutation(); // Reset on failure
+      setAttachmentForPreview(null);
+    }
+  }, [uploadMutationData]); // Depend only on the mutation data
+
+  // Effect to handle upload errors
+  useEffect(() => {
+    if (uploadError) {
+      console.error("[ChatWindow] Upload mutation hook error:", uploadError);
+      toast.error("Upload Error", {
+        description: uploadError.message || "Could not upload attachment.",
+      });
+      setAttachmentForPreview(null);
+      originalFileRef.current = null;
+      resetUploadMutation(); // Reset on error
+    }
+  }, [uploadError, resetUploadMutation]);
+
+  // Handler triggered by MessageInput when a file is selected
+  const handleFileSelected = (file) => {
+    // Renamed for clarity
+    if (file && !isUploading) {
+      resetUploadMutation();
+      setAttachmentForPreview(null);
+      originalFileRef.current = file;
+      const formData = new FormData();
+      formData.append("files[]", file);
+      triggerUpload(formData); // Call the hook's mutate function
+    }
+  };
+
+  const clearPreviewAndResetUpload = () => {
+    setAttachmentForPreview(null);
+    resetUploadMutation();
+    originalFileRef.current = null;
+    // Optionally delete from server if needed
+    // const attachmentIdToDelete = uploadMutationData?.data?.[0]?.id; // Get ID from previous successful upload
+    // if (attachmentIdToDelete) { /* call delete mutation */ }
+  };
 
   // Effect to setup the Intersection Observer
   useEffect(() => {
@@ -324,13 +407,22 @@ const ChatWindow = ({
   }, [loading, messages.length, currentPage]);
 
   // --- Event Handlers (mostly unchanged) ---
-  const handleSendMessage = async (chId, messageText, attachmentId = null) => {
-    if ((!messageText || !messageText.trim()) && !attachmentId) {
+  const handleSendMessage = async (chId, messageText) => {
+    // Remove attachmentId from signature
+    const attachmentId = attachmentForPreview?.data?.id; // Get ID from preview state
+
+    // Check if there's text OR an attachment ID
+    if (
+      (!messageText || !messageText.trim()) &&
+      !attachmentId &&
+      !editingMessage
+    ) {
       console.warn("Attempted to send empty message without attachment.");
       return;
     }
-    if (isSending) return;
-    setIsSending(true);
+    if (isSending || isUploading) return; // Prevent sending if uploading or already sending
+
+    setIsSending(true); // Indicate socket message sending is in progress
     const action = editingMessage ? "edit" : "send";
     const toastId = toast.loading(
       editingMessage ? "Updating message..." : "Sending message..."
@@ -338,24 +430,31 @@ const ChatWindow = ({
 
     try {
       if (editingMessage) {
-        await emitEditMessage(chId, editingMessage.id, messageText || ""); // Allow sending empty string to delete text
+        // Attachments generally aren't edited, only text
+        await emitEditMessage(chId, editingMessage.id, messageText || "");
         toast.success("Message updated", { id: toastId });
-        setEditingMessage(null); // Clear editing state on success
+        setEditingMessage(null);
       } else {
-        await emitSendMessage(chId, messageText, attachmentId);
-        // Assuming 'newMessage' event updates the UI, no success toast needed here unless desired
-        toast.dismiss(toastId); // Dismiss loading toast on success
+        // Send message text and/or attachment ID
+        await emitSendMessage(chId, messageText, attachmentId); // Pass attachmentId here
+        toast.dismiss(toastId);
+
+        // --- Clear attachment state ONLY on successful send ---
+        if (attachmentId) {
+          setAttachmentForPreview(null);
+          resetUploadMutation(); // Reset hook fully
+          originalFileRef.current = null;
+        }
       }
-      // Clear input field after successful send/edit
-      // The MessageInput component will clear itself if !editingMessage
+      // MessageInput will clear text if not editing
     } catch (err) {
       console.error(`Failed to ${action} message:`, err);
       toast.error(`Error: ${err?.message || `Could not ${action} message`}`, {
         id: toastId,
       });
+      // Do NOT clear attachment preview on send error, allow retry
     } finally {
       setIsSending(false);
-      // Let MessageInput clear itself based on editingMessage state
     }
   };
 
@@ -389,36 +488,6 @@ const ChatWindow = ({
   const handleSelectMessage = (messageId) => {
     if (!channelId) return;
     toggleMessageSelection(channelId, messageId);
-  };
-
-  // Attachment upload logic seems okay
-  const handleAttachmentUpload = async (file) => {
-    if (!channelId || isSending) return;
-    setIsSending(true); // Use the main sending flag
-    const toastId = toast.loading("Uploading attachment...");
-    try {
-      const token = useAuthStore.getState().token;
-      if (!token) throw new Error("Authentication token not found.");
-      const response = await uploadAttachment(token, file);
-      if (response.success && response.data?.id) {
-        const attachmentId = response.data.id;
-        // Attachment uploaded, now send the message with attachment ID
-        // Don't show success for upload, wait for message send success
-        toast.dismiss(toastId); // Dismiss upload toast
-        await handleSendMessage(channelId, "", attachmentId); // Send message with attachment
-      } else {
-        throw new Error(
-          response.message || "Upload processing failed on server"
-        );
-      }
-    } catch (error) {
-      console.error("Attachment Upload/Send failed:", error);
-      toast.error(`Attachment Error: ${error.message || "Upload failed"}`, {
-        id: toastId, // Update the same toast on error
-      });
-      setIsSending(false); // Reset sending state on upload error
-    }
-    // No finally here, handleSendMessage will set isSending to false
   };
 
   // --- Message Rendering with Separators (Memoized) ---
@@ -552,13 +621,29 @@ const ChatWindow = ({
       </div>
 
       {/* Message Input (Row 3 - Fixed Height) */}
+      {/* Message Input Area */}
       <div className="flex-shrink-0 sticky bottom-0 bg-background border-t">
+        {/* Conditionally render Attachment Preview */}
+        {attachmentForPreview && !isUploading && (
+          <AttachmentInputPreview
+            attachmentPreview={attachmentForPreview}
+            onRemove={clearPreviewAndResetUpload}
+          />
+        )}
+
+        {/* Message Input Component */}
         <MessageInput
           channelId={channelId}
-          onSendMessage={handleSendMessage}
+          onSendMessage={handleSendMessage} // Connects to the handler above
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}
-          onAttachmentSelected={handleAttachmentUpload}
+          // File selection triggers upload in parent
+          onAttachmentSelected={handleFileSelected} // Renamed prop
+          // Pass down upload/preview state
+          isUploading={isUploading}
+          // Pass function to clear preview
+          clearUploadPreview={clearPreviewAndResetUpload}
+          // Pass message sending state
           isSending={isSending}
         />
       </div>

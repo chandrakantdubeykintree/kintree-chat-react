@@ -17,10 +17,11 @@ import { useDebouncedCallback } from "use-debounce";
 const MessageInput = ({
   channelId,
   onSendMessage,
-  editingMessage, // { id, message }
+  editingMessage,
   onCancelEdit,
-  onAttachmentSelected, // Callback with the File object
-  isSending, // Disable input/buttons while sending/uploading
+  onAttachmentSelected,
+  isUploading,
+  isSending,
 }) => {
   const [message, setMessage] = useState("");
   const textareaRef = useRef(null);
@@ -95,6 +96,8 @@ const MessageInput = ({
 
   const handleFileSelected = (e) => {
     const file = e.target.files?.[0];
+    console.log("selected files", file);
+
     if (file) {
       onAttachmentSelected(file); // Pass the file object up
     }
@@ -111,6 +114,9 @@ const MessageInput = ({
       emitStopTyping(channelId);
     };
   }, [channelId, debouncedStopTyping]); // Rerun effect if channelId changes
+
+  // Determine combined loading state
+  const isDisabled = isUploading || isSending;
 
   return (
     <div className="p-3 border-t bg-background relative">
@@ -149,7 +155,11 @@ const MessageInput = ({
           onClick={handleAttachClick}
           disabled={isSending}
         >
-          <Paperclip className="h-5 w-5" />
+          {isUploading ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : (
+            <Paperclip className="h-5 w-5" />
+          )}
         </Button>
         {/* <Button variant="ghost" size="icon" disabled={isSending}>
                      <Smile className="h-5 w-5" />
@@ -162,11 +172,11 @@ const MessageInput = ({
           onKeyDown={handleKeyDown}
           rows={1}
           className="flex-1 resize-none max-h-40 min-h-[40px] overflow-y-hidden text-sm" // Added text-sm
-          disabled={isSending} // Disable textarea while sending
+          disabled={isDisabled} // Disable textarea while sending
         />
         <Button
           onClick={handleSend}
-          disabled={(!message.trim() && !editingMessage) || isSending}
+          disabled={isDisabled || (!message.trim() && !editingMessage)}
           size="icon"
         >
           {isSending ? (

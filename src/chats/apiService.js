@@ -1,6 +1,5 @@
 // components/chats/apiService.js
 import axios from "axios";
-import useAuthStore from "./useAuthStore"; // To get base URL if needed from PHP
 import { kintreeApi } from "@/services/kintreeApi";
 
 // Get the base URL from environment variables or PHP config endpoint if available
@@ -75,28 +74,23 @@ export const uploadAttachment = async (token, file) => {
   }
 
   const formData = new FormData();
-  // The PHP backend expects the file under a specific key,
-  // e.g., 'attachment_file' or similar. Adjust 'file' if needed.
-  formData.append("file", file);
+
+  formData.append("files[]", file);
 
   try {
-    // Assuming your PHP upload endpoint is /user/attachments (POST)
-    const response = await apiClient.post("/user/attachments", formData, {
+    // Assuming your PHP upload endpoint is /attachments (POST)
+    const response = await kintreeApi.post("/attachments", formData, {
       headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "multipart/form-data", // Axios sets this automatically with FormData but good to be explicit
+        "Content-Type": "multipart/form-data",
       },
-      // Optional: Add progress tracking
-      // onUploadProgress: progressEvent => {
-      //     const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-      //     console.log(`Upload Progress: ${percentCompleted}%`);
-      //     // You could update UI progress here
-      // }
     });
 
     // Check the structure of your PHP response
     // Assuming it looks like: { success: true, data: { id: 123, url: '...', ... }, message: '...' }
-    if (response.data && response.data.success && response.data.data?.id) {
+
+    console.log("response from the api of attachment", response);
+
+    if (response.data && response.data.success) {
       return {
         success: true,
         data: response.data.data,
