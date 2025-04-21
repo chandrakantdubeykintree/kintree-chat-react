@@ -1,4 +1,4 @@
-// frontend/src/components/chats/ChatWindowHeader.jsx
+// src/components/chats/ChatWindowHeader.jsx
 import React, { useMemo, useState } from "react"; // Import useMemo
 import {
   ArrowLeft,
@@ -82,10 +82,7 @@ const ChatWindowHeader = ({ channel, onBack, onViewContactInfo }) => {
   );
 
   const handleViewInfo = () => {
-    console.log(onViewContactInfo);
-
     if (onViewContactInfo && channel) {
-      console.log("clicked from viewinfo");
       onViewContactInfo(channel); // Pass the current channel data up
     }
   };
@@ -319,8 +316,6 @@ const ChatWindowHeader = ({ channel, onBack, onViewContactInfo }) => {
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuItem
                     onClick={() => {
-                      console.log("clicked view info");
-
                       handleViewInfo();
                     }}
                   >

@@ -1,3 +1,4 @@
+// components/chats/AttachmentPreview.jsx
 import React from "react";
 import {
   Image as ImageIcon,

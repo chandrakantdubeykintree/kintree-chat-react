@@ -1,4 +1,4 @@
-// frontend/src/chats/socketService.js
+// src/chats/socketService.js
 import { io } from "socket.io-client";
 import useAuthStore from "./useAuthStore";
 import useChatStore from "./useChatStore";
@@ -12,7 +12,6 @@ const MESSAGES_PER_PAGE = 20;
 export const connectSocket = () => {
   // Prevent multiple connections
   if (socket?.connected) {
-    console.log("Socket already connected.");
     return socket;
   }
 
@@ -25,7 +24,6 @@ export const connectSocket = () => {
     return null;
   }
 
-  console.log("Attempting to connect socket...");
   // Disconnect previous instance if exists but not connected
   if (socket) {
     socket.disconnect();
@@ -45,7 +43,6 @@ export const connectSocket = () => {
 
 export const disconnectSocket = () => {
   if (socket) {
-    console.log("Disconnecting socket...");
     socket.disconnect();
     socket = null;
     // Optionally reset chat state on explicit disconnect
@@ -69,22 +66,34 @@ const setupSocketListeners = (socketInstance) => {
     updateExistingMessage,
     removeMessage,
     resetChatState,
-  } = useChatStore.getState();
-  const { logout } = useAuthStore.getState();
-  const { updateChannelInList, updateUnreadCount } = useChatStore.getState();
-  const { updateChannelUserStatus } = useChatStore.getState(); // Add this action to store
-  const { updateMessageStatuses } = useChatStore.getState();
-  const {
+    updateChannelInList,
+    updateUnreadCount,
+    updateChannelUserStatus,
+    updateMessageStatuses, // <<< Need this action
     setTypingUser,
     clearTypingUser,
     setTypingTimeoutRef,
     clearTypingTimeoutRef,
+    updateAllMessagesDelivered, // <<< NEW Store Action
+    updateAllMessagesRead, // <<< NEW Store Action
   } = useChatStore.getState();
+  const { setUser } = useAuthStore.getState();
+  const { logout } = useAuthStore.getState();
   const currentUserId = useAuthStore.getState().user?.id; // Get current user ID
+
+  socketInstance.on("authenticatedUserData", ({ user }) => {
+    if (user) {
+      setUser(user); // Set user in the store
+    } else {
+      console.warn(
+        "[Socket Listener] Received invalid user data after authentication."
+      );
+      // Optional: handle this case, maybe disconnect/logout
+    }
+  });
 
   // --- Connection Handling ---
   socketInstance.on(SOCKET_EVENTS.CONNECT, () => {
-    console.log("Socket connected successfully:", socketInstance.id);
     toast.success("Connected to chat");
     // Automatically fetch channels on successful connection/reconnection
     fetchChannels();
@@ -120,114 +129,107 @@ const setupSocketListeners = (socketInstance) => {
   // --- Application Logic Listeners ---
 
   socketInstance.on(SOCKET_EVENTS.NEW_MESSAGE, ({ channelId, message }) => {
-    console.log("Received new message:", message);
-    addNewMessage(channelId, message);
-    // TODO: Add notification for inactive channels
-    const activeChannelId = useChatStore.getState().activeChannelId;
+    const storeState = useChatStore.getState(); // Get latest state
     const currentUserId = useAuthStore.getState().user?.id;
-    // Add message to store (existing logic)
-    useChatStore.getState().addNewMessage(channelId, message);
 
-    // If message was NOT sent by me, emit delivered ACK
-    if (message.created_by?.id !== currentUserId) {
-      emitMessageDelivered(channelId, message.id);
+    // 1. Add message to store
+    storeState.addNewMessage(channelId, message);
+
+    const isMessageFromOther =
+      currentUserId &&
+      message.created_by?.id &&
+      message.created_by.id !== currentUserId;
+
+    // 2. Emit Delivered ACK if message is NOT from the current user
+    if (message.created_by?.id && message.created_by.id !== currentUserId) {
+      emitMessageDelivered(channelId, message.id); // Send Delivery ACK for this specific message
+    } else {
+      console.log(
+        ` -> Message ${message.id} is from self or missing sender ID. Skipping delivery ACK.`
+      );
     }
 
-    if (channelId !== activeChannelId) {
-      toast(`New message in ${message.created_by?.first_name || "chat"}`, {
-        // Use Shadcn Toaster
-        description: message.message.substring(0, 50) + "...",
-        // action: { label: "View", onClick: () => setActiveChannelId(channelId) } // Requires component context
+    // 3. Handle notifications / marking read for active channel
+    if (channelId !== storeState.activeChannelId) {
+      // Show notification for inactive channel
+      toast(`New message in ${message.channel?.name || "chat"}`, {
+        description: message.message?.substring(0, 50) + "...",
+        // Action needs component context or navigation service
       });
     } else {
-      // If in the active channel, maybe mark as read automatically or based on visibility
-      emitMarkMessageRead(channelId, message.id); // Example
+      if (isMessageFromOther) {
+        // Use a slight delay to allow rendering before marking read (optional but often good UX)
+        setTimeout(() => {
+          // Check connection again before emitting after delay
+          if (getSocket()?.connected) {
+            emitMarkMessageRead(channelId, message.id); // <<< EMIT SINGLE READ ACK
+          }
+        }, 300);
+      }
     }
   });
 
-  // --- Listener for status updates (delivered/read) ---
-  // socketInstance.on(
-  //   SOCKET_EVENTS.MESSAGE_STATUS_UPDATE,
-  //   ({ channelId, updates }) => {
-  //     if (!updates || updates.length === 0) return;
-  //     console.log(`Received status update for channel ${channelId}:`, updates);
-  //     // Call Zustand action to update the specific messages
-  //     updateMessageStatuses(channelId, updates);
-  //   }
-  // );
-
   socketInstance.on(
     SOCKET_EVENTS.MESSAGE_STATUS_UPDATE,
-    ({ channelId, messageId, status, read_at, delivered_at }) => {
-      console.log(`Received status update for message ${messageId}: ${status}`);
-      // Update the specific message in the store
-      updateExistingMessage(channelId, {
-        id: messageId,
-        read_at,
-        delivered_at,
-      }); // Pass updates
+    ({ channelId, updates }) => {
+      if (!updates || !Array.isArray(updates) || updates.length === 0) return;
+
+      updateMessageStatuses(channelId, updates); // Handles single updates
     }
   );
 
-  // --- Listener for channel read confirmation ---
+  // Handles bulk "Delivered" status updates for a channel
+  socketInstance.on(
+    SOCKET_EVENTS.CHANNEL_BULK_DELIVERED_UPDATE,
+    ({ channelId, delivered_at, actorUserId }) => {
+      // Call the Zustand action to update all relevant messages locally
+      updateAllMessagesDelivered(channelId, delivered_at, actorUserId);
+    }
+  );
+
+  // Handles bulk "Read" status updates for a channel
+  socketInstance.on(
+    SOCKET_EVENTS.CHANNEL_BULK_READ_UPDATE,
+    ({ channelId, read_at, actorUserId }) => {
+      // Call the Zustand action to update all relevant messages locally
+      updateAllMessagesRead(channelId, read_at, actorUserId);
+    }
+  );
+
   socketInstance.on(
     SOCKET_EVENTS.CHANNEL_READ_UPDATE,
-    ({ channelId, readAt, updatedMessageIds }) => {
-      console.log(
-        `Received channel read update for ${channelId}. ReadAt: ${readAt}, Updated IDs:`,
-        updatedMessageIds
-      );
-      // Update the unread count locally
-      updateUnreadCount(channelId, 0);
-      // If backend provided updated IDs and timestamp, update message statuses
-      if (readAt && updatedMessageIds && updatedMessageIds.length > 0) {
-        const updates = updatedMessageIds.map((id) => ({
-          messageId: id,
-          read_at: readAt,
-        }));
-        updateMessageStatuses(channelId, updates);
+    ({ channelId, readerUserId, readAt }) => {
+      // This specifically handles the unread count based on who read it
+      const storeState = useChatStore.getState();
+      if (readerUserId === currentUserId) {
+        storeState.updateUnreadCount(channelId, 0); // Update local unread count
       }
-      // Note: If updatedMessageIds aren't provided, the client might need
-      // to manually assume all its sent messages in the channel are read,
-      // or refetch messages, which is less ideal.
+      // Note: The actual message read statuses are handled by CHANNEL_BULK_READ_UPDATE now
     }
   );
 
   socketInstance.on(SOCKET_EVENTS.MESSAGE_UPDATED, ({ channelId, message }) => {
-    console.log("Received message update:", message);
     updateExistingMessage(channelId, message);
   });
 
   socketInstance.on(
     SOCKET_EVENTS.MESSAGE_DELETED,
     ({ channelId, messageId }) => {
-      console.log(`Received message delete for ID: ${messageId}`);
       removeMessage(channelId, messageId);
     }
   );
 
-  // Add listeners for 'channelUpdated', 'channelDeleted', 'chatCleared' etc.
-  // Example:
-  // socketInstance.on('channelUpdated', ({ channelData }) => {
-  //    updateChannelInList(channelData); // Need a function in chatStore for this
-  // });
-
   socketInstance.on("channelMessagesRead", ({ channelId }) => {
-    console.log(
-      `Received confirmation: All messages read for channel ${channelId}`
-    );
     // Update the unread count in the specific channel in the store
     updateUnreadCount(channelId, 0);
   });
 
   // Listener for general channel updates (e.g., after clearing chat, deleting chat)
   socketInstance.on("channelUpdated", ({ channelData }) => {
-    console.log(`Received channel update for channel ${channelData.id}`);
     updateChannelInList(channelData); // Need this function in Zustand store
   });
 
   socketInstance.on("channelDeleted", ({ channelId }) => {
-    console.log(`Received channel deletion for channel ${channelId}`);
     // Remove channel from store, maybe navigate user away if active
     const { removeChannel, activeChannelId, setActiveChannelId } =
       useChatStore.getState();
@@ -241,7 +243,6 @@ const setupSocketListeners = (socketInstance) => {
 
   // Listener for chat cleared event
   socketInstance.on("chatCleared", ({ channelId }) => {
-    console.log(`Received chat cleared for channel ${channelId}`);
     const { clearMessagesForChannel } = useChatStore.getState(); // Need this function
     clearMessagesForChannel(channelId);
     toast.info("Chat history cleared.");
@@ -249,19 +250,16 @@ const setupSocketListeners = (socketInstance) => {
   });
 
   socketInstance.on("newChannelCreated", ({ channelData }) => {
-    console.log("Received new channel created by another user:", channelData);
     // Add or update the channel in the list
     updateChannelInList(channelData);
     toast.info(`New chat started: ${channelData.name}`);
   });
 
   socketInstance.on("userOnline", ({ userId }) => {
-    console.log(`User ${userId} came online`);
     updateChannelUserStatus(userId, true, null); // Set online, clear lastSeen
   });
 
   socketInstance.on("userOffline", ({ userId, lastSeen }) => {
-    console.log(`User ${userId} went offline, last seen: ${lastSeen}`);
     updateChannelUserStatus(userId, false, lastSeen); // Set offline, update lastSeen
   });
 
@@ -271,10 +269,6 @@ const setupSocketListeners = (socketInstance) => {
       // Don't show typing indicator for yourself
       if (userId === currentUserId) return;
 
-      console.log(
-        `User ${userName} (${userId}) is typing in channel ${channelId}`
-      );
-
       // Clear any existing timeout for this channel (prevents conflicts)
       clearTypingTimeoutRef(channelId);
 
@@ -283,9 +277,6 @@ const setupSocketListeners = (socketInstance) => {
 
       // Set a local timeout to clear the indicator if stop event isn't received
       const timeoutId = setTimeout(() => {
-        console.log(
-          `Typing indicator timeout for channel ${channelId}, user ${userId}. Clearing.`
-        );
         clearTypingUser(channelId, userId); // Clear specific user
       }, 3000); // 3 seconds timeout
 
@@ -301,8 +292,6 @@ const setupSocketListeners = (socketInstance) => {
       // Don't process stop typing event for yourself
       if (userId === currentUserId) return;
 
-      console.log(`User ${userId} stopped typing in channel ${channelId}`);
-
       // Clear the local timeout associated with this channel (if any)
       clearTypingTimeoutRef(channelId);
 
@@ -310,8 +299,6 @@ const setupSocketListeners = (socketInstance) => {
       clearTypingUser(channelId, userId);
     }
   );
-
-  console.log("Socket listeners configured.");
 };
 
 // --- Emitter Functions ---
@@ -325,9 +312,7 @@ export const fetchChannels = () => {
     return;
   }
   setLoadingChannels(true);
-  console.log("Emitting getChannels");
   socket.emit(SOCKET_EVENTS.GET_CHANNELS, (response) => {
-    console.log("getChannels response:", response);
     if (response.success) {
       setChannels(response.channels);
     } else {
@@ -354,20 +339,12 @@ export const fetchMessages = (channelId, page = 1) => {
   setMessagesLoading(channelId, true);
   const limit = MESSAGES_PER_PAGE; // Ensure this constant is defined or imported
 
-  console.log(
-    `Emitting getMessages for channel ${channelId}, page ${page}, limit ${limit}`
-  );
-
   // Return a promise to allow the caller (ChatWindow) to know when it's done (optional)
   return new Promise((resolve, reject) => {
     socket.emit(
       SOCKET_EVENTS.GET_MESSAGES,
       { channelId, page, limit },
       (response) => {
-        console.log(
-          `getMessages response for channel ${channelId} page ${page}:`,
-          response
-        );
         // Always set loading to false *after* processing the response
         setMessagesLoading(channelId, false); // Set loading false *before* resolving/rejecting
 
@@ -403,10 +380,6 @@ export const emitSendMessage = (channelId, message, attachment_id = null) => {
       { channelId, message, attachment_id },
       (response) => {
         if (response.success) {
-          console.log(
-            "Message sent successfully via socket:",
-            response.message
-          );
           // The 'newMessage' listener will handle adding it to the store
           resolve(response.message);
         } else {
@@ -427,7 +400,6 @@ export const emitEditMessage = (channelId, messageId, message) => {
       { channelId, messageId, message },
       (response) => {
         if (response.success) {
-          console.log("Message edited successfully:", response.message);
           resolve(response.message);
         } else {
           toast.error("Edit Error", { description: response.error });
@@ -446,7 +418,6 @@ export const emitDeleteMessage = (channelId, messageId) => {
       { channelId, messageId },
       (response) => {
         if (response.success) {
-          console.log("Message deleted successfully");
           resolve();
         } else {
           toast.error("Delete Error", { description: response.error });
@@ -458,48 +429,61 @@ export const emitDeleteMessage = (channelId, messageId) => {
 };
 
 export const emitMarkMessageRead = (channelId, messageId) => {
-  if (!socket || !socket.connected) return Promise.reject("Not connected");
-  return new Promise((resolve, reject) => {
+  const socket = getSocket();
+  if (socket && socket.connected && channelId && messageId) {
     socket.emit(
       SOCKET_EVENTS.MARK_MESSAGE_READ,
       { channelId, messageId },
       (response) => {
-        if (response.success) {
-          console.log(`Message ${messageId} marked as read.`);
-          resolve();
-        } else {
-          // Don't necessarily show error toast for this, could fail silently or log
+        if (!response?.success) {
           console.warn(
-            `Failed to mark message ${messageId} as read: ${response.error}`
+            `[Socket Emitter] Server failed to mark message ${messageId} as read: ${response?.error}`
           );
-          reject(response.error);
         }
       }
     );
-  });
+  }
 };
 
 export const emitMarkAllRead = (channelId) => {
   const socket = getSocket();
-  if (!socket || !socket.connected) {
-    const errorMsg = "Not connected";
-    console.error("Socket not connected:", errorMsg);
-    return Promise.reject(new Error(errorMsg));
-  }
-  console.log(`Emitting markChannelRead for channel ${channelId}`);
+  if (!socket || !socket.connected)
+    return Promise.reject(new Error("Not connected"));
+
   return new Promise((resolve, reject) => {
-    socket.emit("markChannelRead", { channelId }, (response) => {
+    socket.emit(SOCKET_EVENTS.MARK_CHANNEL_READ, { channelId }, (response) => {
       if (response?.success) {
-        console.log(`Channel ${channelId} marked as read successfully.`);
         resolve();
       } else {
-        const errorMsg = response?.error || "Failed on server";
         console.warn(
-          `Failed to mark channel ${channelId} as read: ${errorMsg}`
+          `[Socket Emitter] Mark channel ${channelId} read ACK received: Failed - ${response?.error}`
         );
-        reject(new Error(errorMsg));
+        reject(new Error(response?.error || "Failed on server"));
       }
     });
+  });
+};
+
+export const emitMarkAllDelivered = (channelId) => {
+  const socket = getSocket();
+  if (!socket || !socket.connected)
+    return Promise.reject(new Error("Not connected"));
+
+  return new Promise((resolve, reject) => {
+    socket.emit(
+      SOCKET_EVENTS.MARK_CHANNEL_DELIVERED,
+      { channelId },
+      (response) => {
+        if (response?.success) {
+          resolve();
+        } else {
+          console.warn(
+            `[Socket Emitter] Mark channel ${channelId} delivered ACK received: Failed - ${response?.error}`
+          );
+          reject(new Error(response?.error || "Failed on server"));
+        }
+      }
+    );
   });
 };
 
@@ -512,13 +496,11 @@ export const emitClearChat = (channelId) => {
     });
     return Promise.reject(new Error("Not connected")); // Return rejected promise with Error object
   }
-  console.log(`Emitting clearChannelChat for channel ${channelId}`);
   // Return a promise to handle success/failure in the component
   return new Promise((resolve, reject) => {
     // Ensure the event name matches the one in node-server/socket/handlers.js
     socket.emit("clearChannelChat", { channelId }, (response) => {
       if (response?.success) {
-        console.log(`Channel ${channelId} chat clear request successful.`);
         // The 'chatCleared' listener should handle the state update
         resolve();
       } else {
@@ -542,13 +524,11 @@ export const emitDeleteChannel = (channelId) => {
     });
     return Promise.reject(new Error("Not connected")); // Return rejected promise with Error object
   }
-  console.log(`Emitting deleteChannel for channel ${channelId}`);
   // Return a promise
   return new Promise((resolve, reject) => {
     // Ensure the event name matches the one in node-server/socket/handlers.js
     socket.emit("deleteChannel", { channelId }, (response) => {
       if (response?.success) {
-        console.log(`Channel ${channelId} delete request successful.`);
         // The 'channelDeleted' listener should handle the state update
         resolve();
       } else {
@@ -576,7 +556,6 @@ export const emitCreateChannel = (userId) => {
   const userIds = [userId]; // Send as an array as per backend expectation
   const isGroup = 0; // Explicitly 1-on-1 chat
 
-  console.log(`Emitting createChannel with userIds: ${userIds}`);
   // Return a promise
   return new Promise((resolve, reject) => {
     // Event name should match Node handler
@@ -589,7 +568,6 @@ export const emitCreateChannel = (userId) => {
       },
       (response) => {
         if (response?.success) {
-          console.log("Channel creation/fetch successful:", response.channel);
           // response.channel should contain the data for the newly created or existing channel
           resolve(response.channel);
         } else {
@@ -620,8 +598,8 @@ export const emitStopTyping = (channelId) => {
 export const emitMessageDelivered = (channelId, messageId) => {
   const socket = getSocket();
   if (socket && socket.connected && channelId && messageId) {
-    // console.log(`Emitting delivery ACK for msg ${messageId} in channel ${channelId}`); // Optional log
     socket.emit(SOCKET_EVENTS.MESSAGE_DELIVERED_ACK, { channelId, messageId });
+    // No callback needed for simple ACK
   }
 };
 

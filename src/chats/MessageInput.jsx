@@ -1,4 +1,4 @@
-// frontend/src/components/chats/MessageInput.jsx
+// src/components/chats/MessageInput.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -65,13 +65,10 @@ const MessageInput = ({
 
   // Debounced function to emit stopTyping
   const debouncedStopTyping = useDebouncedCallback(() => {
-    console.log("Debounce fired: Stopping typing");
     emitStopTyping(channelId);
   }, 1500); // Emit stop typing after 1.5 seconds of inactivity
 
   const handleTyping = () => {
-    // Emit start typing immediately (socket.io handles throttling if needed)
-    // console.log("Typing detected: Starting typing"); // Verbose log
     emitStartTyping(channelId);
     // Debounce the stop typing event
     debouncedStopTyping();
@@ -99,7 +96,6 @@ const MessageInput = ({
   const handleFileSelected = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      console.log("File selected:", file.name);
       onAttachmentSelected(file); // Pass the file object up
     }
     // Reset file input value so selecting the same file again triggers onChange
@@ -112,8 +108,7 @@ const MessageInput = ({
     return () => {
       // If the component unmounts, cancel any pending stop typing event and emit immediately
       debouncedStopTyping.cancel(); // Cancel pending debounced call
-      emitStopTyping(channelId); // Emit stop immediately on unmount/channel change
-      console.log("MessageInput cleanup: Emitted stop typing for", channelId);
+      emitStopTyping(channelId);
     };
   }, [channelId, debouncedStopTyping]); // Rerun effect if channelId changes
 

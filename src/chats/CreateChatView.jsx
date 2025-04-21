@@ -1,4 +1,4 @@
-// frontend/src/components/chats/CreateChatView.jsx
+// src/components/chats/CreateChatView.jsx
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -65,7 +65,6 @@ const CreateChatView = ({ onClose, onChannelCreated }) => {
     if (creatingChannelWith) return; // Prevent double clicks
 
     setCreatingChannelWith(member.id);
-    console.log(`Attempting to create/find channel with user ID: ${member.id}`);
 
     try {
       // emitCreateChannel expects only the *other* user's ID for 1-on-1

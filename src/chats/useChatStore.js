@@ -1,4 +1,4 @@
-// frontend/src/components/chats/useChatStore.js
+// src/components/chats/useChatStore.js
 import { create } from "zustand";
 import { produce } from "immer"; // Optional: For easier nested state updates
 import useAuthStore from "./useAuthStore";
@@ -145,10 +145,6 @@ const useChatStore = create((set, get) => ({
         // **** END KEY FIX ****
         channelState.loading = false; // Ensure loading is false after adding
         channelState.error = null; // Clear any previous error
-
-        console.log(
-          `Store: Added page ${fetchedPage} for channel ${channelId}. Current highest page fetched: ${channelState.currentPage}, Last page from API: ${channelState.lastPage}`
-        );
       })
     ),
 
@@ -189,18 +185,19 @@ const useChatStore = create((set, get) => ({
           (c) => c.id === channelId
         );
         if (channelIndex > -1) {
-          state.channels[channelIndex].latest_message = message;
-          const currentUserId = useAuthStore.getState().user?.id; // Get current user ID
-          if (
-            state.activeChannelId !== channelId &&
-            message.created_by?.id !== currentUserId
-          ) {
+          state.channels[channelIndex].latest_message = message; // Update latest message
+          const currentUserId = useAuthStore.getState().user?.id;
+          const isActiveChannel = state.activeChannelId === channelId;
+          const isMessageFromOther =
+            message.created_by?.id && message.created_by.id !== currentUserId;
+
+          // Increment unread count ONLY if channel is NOT active AND message is from another user
+          if (!isActiveChannel && isMessageFromOther) {
             state.channels[channelIndex].unread_message_count =
               (state.channels[channelIndex].unread_message_count || 0) + 1;
-          } else if (state.activeChannelId === channelId) {
-            // If user is in the channel, mark as read
-            state.channels[channelIndex].unread_message_count = 0;
           }
+          // If channel IS active, the channelReadUpdate listener (triggered by emitMarkAllRead) will reset the count later.
+          // We don't need to reset it here.
         }
         // Re-sort channels after adding new message to bring recent chat to top
         state.channels.sort((a, b) => {
@@ -376,8 +373,13 @@ const useChatStore = create((set, get) => ({
           (c) => c.id === channelId
         );
         if (channelIndex > -1) {
-          state.channels[channelIndex].unread_message_count = count;
-          // Optionally re-sort if sorting depends on unread count
+          if (state.channels[channelIndex].unread_message_count !== count) {
+            state.channels[channelIndex].unread_message_count = count;
+          }
+        } else {
+          console.warn(
+            `[Zustand Store] updateUnreadCount: Channel ${channelId} not found.`
+          );
         }
       })
     ),
@@ -490,21 +492,26 @@ const useChatStore = create((set, get) => ({
   updateMessageStatuses: (channelId, updates) =>
     set(
       produce((state) => {
-        if (!state.messages[channelId]?.messages) return; // Channel messages not loaded
+        const channelMessages = state.messages?.[channelId];
+        if (!channelMessages || !Array.isArray(channelMessages.messages)) {
+          /* skip */ return;
+        }
 
+        // Create a map for efficient lookup
         const messageMap = new Map(
           state.messages[channelId].messages.map((msg) => [msg.id, msg])
         );
-        let latestMessageUpdated = false; // Flag to check if channel preview needs update
-        const latestMsgIdInChannel = state.channels.find(
-          (c) => c.id === channelId
-        )?.latest_message?.id;
 
+        // let latestMessageInChannelWasUpdated = false;
+        // const latestMessageIdInChannel = state.channels.find(
+        //   (c) => c.id === channelId
+        // )?.latest_message?.id;
+
+        // Apply updates from the array
         updates.forEach((update) => {
           const message = messageMap.get(update.messageId);
           if (message) {
             let changed = false;
-            // Only update if the new timestamp is later (or first time)
             if (
               update.delivered_at &&
               (!message.delivered_at ||
@@ -521,27 +528,120 @@ const useChatStore = create((set, get) => ({
               message.read_at = update.read_at;
               changed = true;
             }
-            if (changed && message.id === latestMsgIdInChannel) {
-              latestMessageUpdated = true;
-            }
+            // if (changed && message.id === latestMessageIdInChannel) { latestMessageInChannelWasUpdated = true; } // <-- Remove check
+          } // else { /* warn message not found */ }
+        });
+
+        state.messages[channelId].messages = Array.from(messageMap.values());
+      })
+    ),
+
+  // Handles BULK delivered updates <<< NEW ACTION
+  updateAllMessagesDelivered: (channelId, deliveredAt, actorUserId) =>
+    set(
+      produce((state) => {
+        const channelMessages = state.messages?.[channelId];
+        if (
+          !channelMessages ||
+          !Array.isArray(channelMessages.messages) ||
+          channelMessages.messages.length === 0
+        ) {
+          return;
+        }
+        if (
+          !channelMessages ||
+          !Array.isArray(channelMessages.messages) ||
+          channelMessages.messages.length === 0
+        ) {
+          console.warn(
+            `[Zustand Store] Messages not loaded or invalid structure for channel ${channelId}. Cannot update delivered status.`
+          );
+          return;
+        }
+        // **** END CHECKS ****
+
+        const currentUserId = useAuthStore.getState().user?.id;
+        // let latestMessageInChannelWasUpdated = false;
+        // const channelIndex = state.channels.findIndex(
+        //   (c) => c.id === channelId
+        // ); // Find channel index *once*
+        // const latestMessageIdInChannel =
+        //   channelIndex > -1
+        //     ? state.channels[channelIndex]?.latest_message?.id
+        //     : null;
+
+        channelMessages.messages.forEach((message) => {
+          const senderId = message?.created_by?.id;
+          const isMessageFromOther =
+            typeof senderId !== "undefined" && senderId !== currentUserId;
+
+          if (
+            isMessageFromOther &&
+            (!message.delivered_at ||
+              new Date(deliveredAt) > new Date(message.delivered_at))
+          ) {
+            message.delivered_at = deliveredAt;
+            // if (message.id === latestMessageIdInChannel) { latestMessageInChannelWasUpdated = true; } // <-- Remove check
           }
         });
 
-        // Update the messages array (Immer handles immutability)
-        state.messages[channelId].messages = Array.from(messageMap.values());
+        // if (latestMessageInChannelWasUpdated && channelIndex > -1) {
+        //   // Update channel list preview more carefully
+        //   const updatedLatestMessage = state.messages[channelId].messages.find(
+        //     (m) => m.id === latestMessageIdInChannel
+        //   );
+        //   if (updatedLatestMessage) {
+        //     state.channels[channelIndex].latest_message = {
+        //       // Ensure full merge if needed
+        //       ...state.channels[channelIndex].latest_message,
+        //       ...updatedLatestMessage, // Apply latest status
+        //     };
+        //   }
+        // }
+      })
+    ),
 
-        // Also update the latest message in the channel list if affected
-        if (latestMessageUpdated) {
-          const channelIndex = state.channels.findIndex(
-            (c) => c.id === channelId
-          );
-          if (channelIndex > -1) {
-            const updatedLatest = messageMap.get(latestMsgIdInChannel);
-            if (updatedLatest) {
-              state.channels[channelIndex].latest_message = updatedLatest;
-            }
-          }
+  // Handles BULK read updates <<< NEW ACTION
+  updateAllMessagesRead: (channelId, readAt, actorUserId) =>
+    set(
+      produce((state) => {
+        const channelMessages = state.messages?.[channelId];
+        if (
+          !channelMessages ||
+          !Array.isArray(channelMessages.messages) ||
+          channelMessages.messages.length === 0
+        ) {
+          return;
         }
+
+        const currentUserId = useAuthStore.getState().user?.id;
+        // let latestMessageInChannelWasUpdated = false;
+        // const latestMessageIdInChannel = state.channels.find(
+        //   (c) => c.id === channelId
+        // )?.latest_message?.id;
+
+        channelMessages.messages.forEach((message) => {
+          const senderId = message?.created_by?.id;
+          const isMessageFromOther =
+            typeof senderId !== "undefined" && senderId !== currentUserId;
+
+          if (
+            isMessageFromOther &&
+            (!message.read_at ||
+              new Date(readAt) > new Date(message.read_at)) &&
+            (!message.delivered_at ||
+              new Date(readAt) >= new Date(message.delivered_at))
+          ) {
+            message.read_at = readAt;
+            if (
+              !message.delivered_at ||
+              new Date(readAt) > new Date(message.delivered_at)
+            ) {
+              message.delivered_at = readAt;
+            }
+            // if (message.id === latestMessageIdInChannel) { latestMessageInChannelWasUpdated = true; } // <-- Remove check
+          }
+        });
       })
     ),
 

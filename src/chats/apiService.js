@@ -1,3 +1,4 @@
+// components/chats/apiService.js
 import axios from "axios";
 import useAuthStore from "./useAuthStore"; // To get base URL if needed from PHP
 import { kintreeApi } from "@/services/kintreeApi";
@@ -12,8 +13,8 @@ import { kintreeApi } from "@/services/kintreeApi";
 // unless Node also proxies file uploads (less common).
 
 // Get PHP URL from Node server's env (this is awkward)
-// Better: Define VITE_PHP_BACKEND_URL in frontend/.env
-// frontend/.env
+// Better: Define VITE_PHP_BACKEND_URL in .env
+// .env
 // VITE_PHP_BACKEND_URL=http://your-php-app.test/api
 
 const PHP_BACKEND_URL = import.meta.env.VITE_PHP_BACKEND_URL;
@@ -30,6 +31,36 @@ const apiClient = axios.create({
     Accept: "application/json",
   },
 });
+
+export const fetchCurrentUser = async () => {
+  try {
+    // Assume your PHP backend has a '/user' or '/me' endpoint
+    // that returns user data based on the Authorization header
+    const response = await kintreeApi.get("/user"); // Or '/auth/me', etc.
+
+    if (response.data && response.data.success && response.data.data) {
+      return response.data.data; // Return the user object
+    } else {
+      throw new Error(
+        response.data?.message || "Failed to fetch user data from server"
+      );
+    }
+  } catch (error) {
+    console.error(
+      "API Fetch User Error:",
+      error.response?.data || error.message
+    );
+    // Rethrow or handle specific errors (e.g., 401 Unauthorized)
+    if (error.response?.status === 401) {
+      throw new Error("Unauthorized"); // Specific error for auth failure
+    }
+    throw new Error(
+      error.response?.data?.message ||
+        error.message ||
+        "Network error fetching user data"
+    );
+  }
+};
 
 // Function to upload a file and get attachment ID
 export const uploadAttachment = async (token, file) => {
@@ -93,7 +124,6 @@ export const fetchFamilyMembers = async (token) => {
   }
 
   const url = "/family-tree/members"; // The specific endpoint
-  console.log(`Fetching family members from: ${PHP_BACKEND_URL}${url}`);
 
   try {
     const response = await kintreeApi.get(url);
@@ -103,7 +133,6 @@ export const fetchFamilyMembers = async (token) => {
       const activeMembers = response.data.data.filter(
         (member) => member.is_active === 1
       );
-      console.log(`Fetched ${activeMembers.length} active family members.`);
       return activeMembers; // Return only active members
     } else {
       throw new Error(

@@ -1,4 +1,4 @@
-// frontend/src/chats/chatConstants.js
+// src/chats/chatConstants.js
 export const SOCKET_EVENTS = {
   CONNECT: "connect",
   DISCONNECT: "disconnect",
@@ -28,6 +28,10 @@ export const SOCKET_EVENTS = {
   MESSAGE_DELIVERED_ACK: "messageDeliveredAck", // Client -> Server (Client confirms receipt)
   MARK_CHANNEL_READ: "markChannelRead", // Client -> Server (Already exists)
   CHANNEL_READ_UPDATE: "channelReadUpdate", // Server -> Client (Confirms channel read, maybe provides updated messages)
+  MARK_CHANNEL_DELIVERED: "markChannelDelivered", // Client -> Server (Bulk Channel Delivered on Open) << NEW
+
+  CHANNEL_BULK_DELIVERED_UPDATE: "channelBulkDeliveredUpdate",
+  CHANNEL_BULK_READ_UPDATE: "channelBulkReadUpdate",
 };
 
 // Could also add API endpoints here if hitting Node HTTP endpoints directly

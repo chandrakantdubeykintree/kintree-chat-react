@@ -1,4 +1,4 @@
-// frontend/src/components/chats/ChatList.jsx
+// src/components/chats/ChatList.jsx
 import React from "react";
 import useChatStore from "./useChatStore";
 import ChatListItem from "./ChatListItem";

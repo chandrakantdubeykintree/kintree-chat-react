@@ -1,5 +1,4 @@
 // components/chats/MessageInfoView.jsx
-import React from "react";
 import { format } from "date-fns";
 import { CheckCheck, Clock } from "lucide-react";
 
@@ -20,9 +19,8 @@ const MessageInfoView = ({ message }) => {
     if (message.read_at) return `Read (${formatDate(message.read_at)})`;
     if (message.delivered_at)
       return `Delivered (${formatDate(message.delivered_at)})`;
-    // Assuming presence means sent if it has an ID
     if (message.id) return `Sent (${formatDate(message.created_at)})`;
-    return "Pending"; // Or handle this case if you have pending state
+    return "Pending";
   };
 
   const getStatusIcon = () => {
@@ -40,27 +38,26 @@ const MessageInfoView = ({ message }) => {
   return (
     <div className="space-y-3 text-sm">
       {/* Display message content preview? */}
-      {/* <p className="p-2 bg-muted rounded break-words">"{message.message}"</p> */}
+      <p className="p-2 bg-muted rounded break-words">"{message.message}"</p>
       <div className="flex items-center space-x-2">
         {getStatusIcon()}
         <span className="font-medium">{getStatusText()}</span>
       </div>
 
       {/* Optionally show delivered time even if read */}
-      {message.delivered_at && !message.read_at && (
+      {message.delivered_at && (
         <div className="flex items-center space-x-2 pl-7 text-muted-foreground">
-          {" "}
-          {/* Indent */}
           <span>Delivered: {formatDate(message.delivered_at)}</span>
         </div>
       )}
       <div className="flex items-center space-x-2 pl-7 text-muted-foreground">
-        {" "}
-        {/* Indent */}
         <span>Sent: {formatDate(message.created_at)}</span>
       </div>
-
-      {/* Add Read By / Delivered To list for groups later */}
+      {message.read_at && (
+        <div className="flex items-center space-x-2 pl-7 text-muted-foreground">
+          <span>Read: {formatDate(message.read_at)}</span>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-// frontend/src/components/chats/MemberListItem.jsx
+// src/components/chats/MemberListItem.jsx
 import React from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"; // Adjust path
 import { cn } from "@/lib/utils"; // Adjust path

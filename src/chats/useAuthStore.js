@@ -1,4 +1,4 @@
-// frontend/src/components/chats/useAuthStore.js
+// src/components/chats/useAuthStore.js
 import { create } from "zustand";
 
 const useAuthStore = create((set) => ({

@@ -1,4 +1,4 @@
-// frontend/src/components/chats/MessageBubble.jsx
+// src/chats/MessageBubble.jsx
 import React from "react";
 import { format } from "date-fns";
 import {
@@ -34,8 +34,7 @@ const MessageBubble = ({
   const currentUser = useAuthStore((state) => state.user);
 
   const isSelecting = useChatStore((state) => state.isSelecting);
-  const isSender =
-    message.message_sent_by_me || message.created_by?.id === currentUser?.id;
+  const isSender = message.created_by?.id === currentUser?.id;
 
   const handleInfoClick = (e) => {
     e.stopPropagation();
@@ -155,7 +154,6 @@ const MessageBubble = ({
   };
 
   const handleLongPressAction = () => {
-    console.log("Long press detected, selecting message:", message.id);
     // Directly call the selection logic passed via props
     onSelect(message.id);
     // No e.preventDefault() needed here, as the goal is just state change

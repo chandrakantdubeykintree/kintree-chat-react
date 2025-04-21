@@ -1,4 +1,4 @@
-// frontend/src/components/chats/ChatWindow.jsx
+// src/components/chats/ChatWindow.jsx
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import useChatStore from "./useChatStore";
 import {
@@ -7,6 +7,8 @@ import {
   emitEditMessage,
   emitDeleteMessage,
   emitMarkAllRead,
+  emitMarkAllDelivered,
+  getSocket,
   // emitClearChat, // These might be called from Header
   // emitDeleteChannel, // These might be called from Header
 } from "./socketService";
@@ -96,26 +98,20 @@ const ChatWindow = ({
       }
 
       if (!currentData || currentData.currentPage === 0) {
-        // Fetch only if no pages loaded yet
-        console.log(
-          `ChatWindow Effect: Fetching initial messages (page 1) for channel ${channelId}`
-        );
         fetchMessages(channelId, 1) // Fetch page 1
           .then(() => setInitialLoadComplete(true))
           .catch(() => setInitialLoadComplete(true)); // Mark complete even on error
       } else {
         // Already have some messages, mark initial load as complete
         setInitialLoadComplete(true);
-        console.log(
-          `ChatWindow Effect: Messages already present for channel ${channelId} (current page: ${currentData.currentPage})`
-        );
       }
     }
 
     // Cleanup function to potentially reset state or cancel fetches if needed
     return () => {
-      // Maybe cancel ongoing fetches if channelId changes rapidly? (More complex)
-      console.log(`ChatWindow Effect Cleanup for channel ${channelId}`);
+      if (observer.current) {
+        observer.current.disconnect();
+      }
     };
   }, [channelId, resetMessagesForChannel]); // Depend only on channelId and the reset action
 
@@ -144,10 +140,6 @@ const ChatWindow = ({
           behavior: "auto",
           block: "end",
         });
-        console.log(
-          "Scrolling to bottom:",
-          isFirstPage ? "Initial" : "Near bottom"
-        );
       }
     }
     // Depend on initialLoadComplete flag, message count, current page, and selection state
@@ -168,26 +160,16 @@ const ChatWindow = ({
     const state = useChatStore.getState();
     const currentChannelData = state.messages[channelId];
 
-    // Check conditions using the latest state
-    if (!channelId || !currentChannelData) {
-      console.log("Load More: Cannot load - channel data not found");
-      return;
-    }
-
-    if (currentChannelData.loading) {
-      console.log("Load More: Already loading messages");
-      return;
-    }
-
-    if (currentChannelData.currentPage >= currentChannelData.lastPage) {
-      console.log("Load More: No more pages to load");
-      return;
+    if (
+      !channelId ||
+      !currentChannelData ||
+      currentChannelData.loading ||
+      currentChannelData.currentPage >= currentChannelData.lastPage
+    ) {
+      return; // Exit if already loading or no more pages
     }
 
     const nextPage = currentChannelData.currentPage + 1;
-    console.log(
-      `Load More: Requesting page ${nextPage} for channel ${channelId}`
-    );
 
     fetchMessages(channelId, nextPage)
       .then(() => {
@@ -200,72 +182,116 @@ const ChatWindow = ({
 
   // Effect to setup the Intersection Observer
   useEffect(() => {
-    // Reference to the scrollable div element
-    const scrollContainer = scrollAreaRef.current;
-    const targetElement = topMessageObserverTargetRef.current;
-
+    // Wait for initial load AND ensure there are more pages to load
     if (
-      !scrollContainer ||
-      !targetElement ||
-      loading ||
-      currentPage >= lastPage
+      !initialLoadComplete ||
+      currentPage >= lastPage ||
+      !topMessageObserverTargetRef.current
     ) {
+      // If observer exists, disconnect it if conditions aren't met
       if (observer.current) {
         observer.current.disconnect();
-        console.log("Observer disconnected (conditions not met).");
       }
-      return;
+      return; // Don't setup if initial load not done or no more pages
     }
 
+    const targetElement = topMessageObserverTargetRef.current;
+
+    // Define the callback *inside* the effect to capture correct state
     const intersectionCallback = (entries) => {
       const entry = entries[0];
-      if (entry.isIntersecting && !loading && currentPage < lastPage) {
-        console.log(
-          "Target element is visible in viewport, loading more messages"
-        );
+      // Get the LATEST loading state directly inside the callback
+      const isLoading = useChatStore.getState().messages[channelId]?.loading;
+
+      // Check intersection AND ensure we are not already loading
+      if (entry.isIntersecting && !isLoading) {
         loadMoreMessages();
       } else {
-        console.log("Target not intersecting or already loading", {
-          isIntersecting: entry.isIntersecting,
-          loading,
-          currentPage,
-          lastPage,
-        });
+        console.log(
+          "[Observer Callback] Target not intersecting or already loading."
+        );
       }
     };
 
-    // Create and configure new observer
+    // Disconnect previous observer if it exists
+    if (observer.current) {
+      observer.current.disconnect();
+    }
+
     observer.current = new IntersectionObserver(intersectionCallback, {
-      root: null, // Use viewport as root
-      threshold: 0.1, // Trigger when 10% visible
-      rootMargin: "20px", // Add margin to trigger a bit earlier
+      root: scrollAreaRef.current?.children[1], // Observe within the scroll viewport
+      rootMargin: "100px 0px 0px 0px", // Trigger when target is 100px from top edge of viewport
+      threshold: 0.1, // Trigger when 10% is visible (can adjust)
     });
 
     // Start observing target
     observer.current.observe(targetElement);
-    console.log("Observer now monitoring target element for intersection");
 
+    // Return cleanup function to disconnect observer
     return () => {
       if (observer.current) {
         observer.current.disconnect();
-        console.log("Observer disconnected on cleanup");
       }
     };
-  }, [loadMoreMessages, loading, currentPage, lastPage, channelId]);
+    // Rerun when initial load completes, or pagination changes, or target ref available
+  }, [initialLoadComplete, currentPage, lastPage, channelId, loadMoreMessages]);
 
-  // Mark messages as read (logic seems okay, depends on channel data)
   useEffect(() => {
-    if (channelId && channel && channel.unread_message_count > 0) {
-      // Debounce or delay slightly to avoid marking read instantly on open
+    if (channelId && channel && initialLoadComplete) {
       const timer = setTimeout(() => {
-        console.log(`Marking channel ${channelId} as read`);
-        emitMarkAllRead(channelId).catch((err) =>
-          console.warn("Failed to mark all messages read:", err?.message || err)
-        );
-      }, 1000); // 1 second delay
+        // Add connection check before emitting
+        if (getSocket()?.connected) {
+          // Check connection status
+
+          emitMarkAllDelivered(channelId)
+            .then(() =>
+              console.log(
+                ` -> emitMarkAllDelivered for ${channelId} successful.`
+              )
+            )
+            .catch((err) =>
+              console.warn(
+                ` -> Failed to mark channel ${channelId} delivered:`,
+                err?.message || err
+              )
+            );
+        } else {
+          console.warn(
+            ` -> Skipping emitMarkAllDelivered: Socket not connected.`
+          );
+        }
+
+        if (channel.unread_message_count > 0) {
+          if (getSocket()?.connected) {
+            // Check connection status
+
+            emitMarkAllRead(channelId)
+              .then(() =>
+                console.log(` -> emitMarkAllRead for ${channelId} successful.`)
+              )
+              .catch((err) =>
+                console.warn(
+                  ` -> Failed to mark channel ${channelId} read:`,
+                  err?.message || err
+                )
+              );
+          } else {
+            console.warn(` -> Skipping emitMarkAllRead: Socket not connected.`);
+          }
+        } else {
+          console.log(
+            ` -> Skipping emitMarkAllRead for channel ${channelId} (no unread count)`
+          );
+        }
+      }, 500);
       return () => clearTimeout(timer);
+    } else {
+      console.log(
+        `[ChatWindow Effect MarkRead/Deliv] Skipping, channelId: ${channelId}, channel: ${!!channel}, initialLoadComplete: ${initialLoadComplete}`
+      );
     }
-  }, [channelId, channel]); // Depend on channelId and the channel object itself
+    // Add initialLoadComplete to dependencies
+  }, [channelId, channel, initialLoadComplete]);
 
   // Preserve scroll position when loading older messages
   useEffect(() => {
@@ -286,7 +312,6 @@ const ChatWindow = ({
             // Adjust scroll position to keep the same content in view
             if (heightDiff > 0 && currentPage > 1) {
               scrollContainer.scrollTop = prevScrollTop + heightDiff;
-              console.log(`Adjusted scroll position by ${heightDiff}px`);
             }
           }
         };
